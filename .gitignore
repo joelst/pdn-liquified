@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+*.user
+*.lscache
+*.suo
+*.DotSettings.user
+*.code-workspace
+paintdotnet_src/
