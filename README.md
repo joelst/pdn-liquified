@@ -48,6 +48,16 @@ Release builds automatically:
 
 There are no automated tests. Verify by loading Paint.NET and running all three effects (**Effects > Tools > Liquify5**, **Grid Warp**, and **Document Rectify**).
 
+## CI Build Pipeline
+
+This repository includes a GitHub Actions workflow at `.github/workflows/build.yml`.
+
+- Triggers on pushes to `main`, pull requests targeting `main`, and manual runs.
+- Installs .NET 9 SDK.
+- Downloads the latest portable Paint.NET release and sets `PdnRoot` for CI builds.
+- Restores and builds `LiquifyPlugins.slnx` in Debug configuration.
+- Publishes plugin DLLs as downloadable workflow artifacts.
+
 ## Architecture
 
 | Project/File                                    | Role                                                                                              |

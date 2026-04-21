@@ -1,0 +1,103 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: true
+      NUGET_XMLDOC_MODE: skip
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.props',
+            '**/*.targets', '**/global.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Download Paint.NET portable
+        id: paintdotnet
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/paintdotnet/release/releases/latest' -Headers @{ 'User-Agent' = 'pdn-liquify5-ci' }
+          $asset = $release.assets | Where-Object { $_.name -match 'portable\.x64\.zip$' } | Select-Object -First 1
+          if (-not $asset) {
+            throw 'Could not find a portable x64 Paint.NET asset in latest release.'
+          }
+
+          $zipPath = Join-Path $env:RUNNER_TEMP $asset.name
+          $extractPath = Join-Path $env:RUNNER_TEMP 'paintdotnet'
+
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath
+          if (Test-Path $extractPath) {
+            Remove-Item -Path $extractPath -Recurse -Force
+          }
+          Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+
+          $requiredDlls = @(
+            'PaintDotNet.Base.dll',
+            'PaintDotNet.ComponentModel.dll',
+            'PaintDotNet.Core.dll',
+            'PaintDotNet.Effects.Core.dll',
+            'PaintDotNet.Effects.Gpu.dll',
+            'PaintDotNet.Fundamentals.dll',
+            'PaintDotNet.Framework.dll',
+            'PaintDotNet.Primitives.dll',
+            'PaintDotNet.ObjectModel.dll',
+            'PaintDotNet.PropertySystem.dll',
+            'PaintDotNet.Windows.dll',
+            'PaintDotNet.Windows.Core.dll',
+            'PaintDotNet.Windows.Framework.dll'
+          )
+
+          foreach ($dll in $requiredDlls) {
+            $path = Join-Path $extractPath $dll
+            if (-not (Test-Path $path)) {
+              throw "Missing required Paint.NET assembly: $dll"
+            }
+          }
+
+          "PDN_ROOT=$extractPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "pdn_root=$extractPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Restore
+        shell: pwsh
+        run: |
+          dotnet restore LiquifyPlugins.slnx /p:PdnRoot="$env:PDN_ROOT"
+
+      - name: Build (Debug)
+        shell: pwsh
+        run: |
+          dotnet build LiquifyPlugins.slnx -c Debug --no-restore /p:PdnRoot="$env:PDN_ROOT"
+
+      - name: Upload plugin DLL artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-dlls-debug
+          path: |
+            Liquify/bin/Debug/net9.0-windows/LiquifyPlugin.dll
+            GridWarp/bin/Debug/net9.0-windows/GridWarpPlugin.dll
+            DocumentRectify/bin/Debug/net9.0-windows/DocumentRectifyPlugin.dll
+          if-no-files-found: error
