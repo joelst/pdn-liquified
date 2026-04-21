@@ -1,18 +1,15 @@
 # Paint.NET Distortion Plugins (Liquified, Grid Warp, Document Rectify)
 
-<<<<<<< HEAD
 GPU-accelerated distortion effects for Paint.NET 5.x: interactive brush-based liquified, mesh-based grid warp, and document perspective rectification.
+
+📖 **Documentation:**
+- [Installation Guide](./INSTALL.md) — Step-by-step installation instructions and troubleshooting
+- [Release Notes](./RELEASES.md) — How to create releases and distribution guide
+- [Security Policy](./SECURITY.md) — Reporting security issues
 
 ## Features
 
 ### Liquified (Effects > Tools > Liquified)
-=======
-GPU-accelerated and high-DPI compatable distortion effects for Paint.NET 5.x: interactive brush-based liquify, mesh-based grid warp, and document perspective rectification.
-
-## Features
-
-### Liquify (Effects > Tools > Liquified)
->>>>>>> e887709489c25f7d21f67d9e3e27909019565f36
 
 - **10 brush modes** -- Forward Warp, Pucker, Bloat, Twist CW, Twist CCW, Push Left, Reconstruct, Turbulence, Freeze, Unfreeze
 - **GPU rendering** via ComputeSharp D2D1 sample-map shaders with RGSS multisampling
@@ -56,6 +53,53 @@ Release builds automatically:
 
 There are no automated tests. Verify by loading Paint.NET and running all three effects (**Effects > Tools > Liquified**, **Grid Warp**, and **Document Rectify**).
 
+## Installation
+
+### For End Users (from Release Builds)
+
+**Quick Install:**
+1. Download the latest release from [Releases](../../releases/latest)
+2. Double-click `install-plugins.bat`
+3. Done! Restart Paint.NET
+
+For detailed instructions, troubleshooting, and manual installation, see [INSTALL.md](./INSTALL.md).
+
+### For End Users (from Release Builds - Step by Step)
+2. **Run the installer script** (recommended):
+   ```powershell
+   .\install-plugins.ps1
+   ```
+   The script will:
+   - Detect your Paint.NET installation directory
+   - Copy plugin DLLs to both system and user plugin folders
+   - Handle administrator elevation if needed
+   - Verify successful installation
+
+3. **Manual Installation** (if the script doesn't work):
+   - Locate Paint.NET installation: typically `C:\Program Files\paint.net`
+   - Copy the three DLL files to: `C:\Program Files\paint.net\Effects\`
+   - Also copy to: `%USERPROFILE%\Documents\paint.net App Files\Effects\`
+     (Create the `Effects` folder if it doesn't exist)
+   - Restart Paint.NET
+
+4. **Verify Installation:**
+   - Open Paint.NET
+   - Go to **Effects > Tools**
+   - You should see:
+     - Liquified
+     - Grid Warp
+     - Document Rectify
+
+### For Developers (from Source)
+
+Build and deploy locally:
+```powershell
+cd pdn-liquified
+dotnet build -c Release LiquifiedPlugins.slnx
+```
+
+The Release build automatically copies DLLs to your Paint.NET installation (see Build section above).
+
 ## CI Build Pipeline
 
 This repository includes a GitHub Actions workflow at `.github/workflows/build.yml`.
@@ -70,9 +114,9 @@ This repository includes a GitHub Actions workflow at `.github/workflows/build.y
 
 | Project/File                                    | Role                                                                                              |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `Liquified/LiquifiedEffect.cs`                      | Main `GpuImageEffect<LiquifiedConfigToken>` entry point and liquified shader pipeline.                |
-| `Liquified/LiquifiedConfigForm.cs`                  | Interactive brush UI with zoom/pan, freeze mask painting, undo/redo, CPU preview.                 |
-| `Liquified/LiquifiedConfigToken.cs`                 | Strongly typed token for liquified settings and stroke list.                                        |
+| `Liquified/LiquifiedEffect.cs`                  | Main `GpuImageEffect<LiquifiedConfigToken>` entry point and liquified shader pipeline.            |
+| `Liquified/LiquifiedConfigForm.cs`              | Interactive brush UI with zoom/pan, freeze mask painting, undo/redo, CPU preview.                 |
+| `Liquified/LiquifiedConfigToken.cs`             | Strongly typed token for liquified settings and stroke list.                                      |
 | `GridWarp/GridWarpEffect.cs`                    | Main `GpuImageEffect<GridWarpConfigToken>` with grid displacement shader pipeline.                |
 | `GridWarp/GridWarpConfigForm.cs`                | Interactive grid point editing UI with zoom/pan and undo/redo.                                    |
 | `GridWarp/GridWarpConfigToken.cs`               | Token for grid dimensions, quality, and flattened displacements.                                  |
