@@ -1,10 +1,10 @@
 # Paint.NET Distortion Plugins (Liquify, Grid Warp, Document Rectify)
 
-GPU-accelerated distortion effects for Paint.NET 5.x: interactive brush-based liquify, mesh-based grid warp, and document perspective rectification.
+GPU-accelerated and high-DPI compatable distortion effects for Paint.NET 5.x: interactive brush-based liquify, mesh-based grid warp, and document perspective rectification.
 
 ## Features
 
-### Liquify (Effects > Tools > Liquify5)
+### Liquify (Effects > Tools > Liquified)
 
 - **10 brush modes** -- Forward Warp, Pucker, Bloat, Twist CW, Twist CCW, Push Left, Reconstruct, Turbulence, Freeze, Unfreeze
 - **GPU rendering** via ComputeSharp D2D1 sample-map shaders with RGSS multisampling
