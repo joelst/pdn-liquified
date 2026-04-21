@@ -7,3 +7,4 @@ obj/
 *.DotSettings.user
 *.code-workspace
 paintdotnet_src/
+build.log

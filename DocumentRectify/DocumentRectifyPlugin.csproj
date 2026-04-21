@@ -1,0 +1,117 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PdnRoot>C:\Program Files\paint.net</PdnRoot>
+  </PropertyGroup>
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <AssemblyName>DocumentRectifyPlugin</AssemblyName>
+    <RootNamespace>DocumentRectifyPlugin</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImportWindowsDesktopTargets>true</ImportWindowsDesktopTargets>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
+    <Deterministic>False</Deterministic>
+    <AssemblyVersion>5.1.*</AssemblyVersion>
+    <Description>Document rectify perspective-correction effect for Paint.NET 5.x with GPU-accelerated rendering.</Description>
+    <Authors>DocumentRectifyPlugin Contributors</Authors>
+    <Product>DocumentRectifyPlugin</Product>
+    <Copyright>Copyright © 2025 DocumentRectifyPlugin Contributors</Copyright>
+  </PropertyGroup>
+  <PropertyGroup>
+    <NoWarn>1701;1702;CS7035;MSB3277</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="AutoConstructor" Version="5.6.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="ComputeSharp.D2D1" Version="3.0.1" />
+    <PackageReference Include="ILRepack" Version="2.0.35">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.ILLink.Tasks" Version="9.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="PaintDotNet.Base">
+      <HintPath>$(PdnRoot)\PaintDotNet.Base.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.ComponentModel">
+      <HintPath>$(PdnRoot)\PaintDotNet.ComponentModel.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.Core">
+      <HintPath>$(PdnRoot)\PaintDotNet.Core.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.Effects.Core">
+      <HintPath>$(PdnRoot)\PaintDotNet.Effects.Core.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.Effects.Gpu">
+      <HintPath>$(PdnRoot)\PaintDotNet.Effects.Gpu.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.Fundamentals">
+      <HintPath>$(PdnRoot)\PaintDotNet.Fundamentals.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.Framework">
+      <HintPath>$(PdnRoot)\PaintDotNet.Framework.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.Primitives">
+      <HintPath>$(PdnRoot)\PaintDotNet.Primitives.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.ObjectModel">
+      <HintPath>$(PdnRoot)\PaintDotNet.ObjectModel.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.PropertySystem">
+      <HintPath>$(PdnRoot)\PaintDotNet.PropertySystem.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.Windows">
+      <HintPath>$(PdnRoot)\PaintDotNet.Windows.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.Windows.Core">
+      <HintPath>$(PdnRoot)\PaintDotNet.Windows.Core.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PaintDotNet.Windows.Framework">
+      <HintPath>$(PdnRoot)\PaintDotNet.Windows.Framework.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="TrimAndMerge" AfterTargets="PostBuildEvent" Condition="'$(ConfigurationName)' == 'Release'">
+    <Exec Command="dotnet exec &quot;$(PkgMicrosoft_NET_ILLink_Tasks)\tools\net9.0\illink.dll&quot; -a &quot;$(TargetPath)&quot; all --trim-mode copy --action copy -d $(TargetDir) --skip-unresolved --action link &quot;ComputeSharp.Core&quot; --action link &quot;ComputeShare.D2D1&quot; -out &quot;$(TargetDir)output&quot;" />
+    <Exec Command="&quot;$(PkgILRepack)\tools\ilrepack&quot; /internalize /union &quot;$(TargetDir)output\$(TargetName).dll&quot; &quot;$(TargetDir)output\ComputeSharp.Core.dll&quot; &quot;$(TargetDir)output\ComputeSharp.D2D1.dll&quot; /lib:&quot;$(PdnRoot)&quot; /out:&quot;$(TargetPath)&quot;" />
+    <Delete Files="$(TargetDir)output" ContinueOnError="false" />
+    <RemoveDir Directories="$(TargetDir)output" ContinueOnError="false" />
+    <Delete Files="$(TargetDir)ComputeSharp.Core.dll" ContinueOnError="false" />
+    <Delete Files="$(TargetDir)ComputeSharp.D2D1.dll" ContinueOnError="false" />
+  </Target>
+  <Target Name="DeployToPaintDotNetEffects" AfterTargets="TrimAndMerge" Condition="'$(Configuration)' == 'Release' AND Exists('$(PdnRoot)')">
+    <PropertyGroup>
+      <EffectivePdnEffectsDir Condition="'$(PdnEffectsDirOverride)' != ''">$(PdnEffectsDirOverride)</EffectivePdnEffectsDir>
+      <EffectivePdnEffectsDir Condition="'$(PdnEffectsDirOverride)' == ''">$(PdnRoot)\Effects</EffectivePdnEffectsDir>
+    </PropertyGroup>
+    <Message Text="Deploying plugin to $(EffectivePdnEffectsDir)" Importance="high" />
+    <MakeDir Directories="$(EffectivePdnEffectsDir)" Condition="!Exists('$(EffectivePdnEffectsDir)')" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(EffectivePdnEffectsDir)" SkipUnchangedFiles="true" ContinueOnError="true" />
+  </Target>
+  <Target Name="DeployToUserEffects" AfterTargets="TrimAndMerge" Condition="'$(Configuration)' == 'Release'">
+    <PropertyGroup>
+      <UserPdnEffectsDir>$(USERPROFILE)\Documents\paint.net App Files\Effects</UserPdnEffectsDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(UserPdnEffectsDir)" Condition="!Exists('$(UserPdnEffectsDir)')" />
+    <Message Text="Deploying plugin to $(UserPdnEffectsDir)" Importance="high" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(UserPdnEffectsDir)" SkipUnchangedFiles="true" ContinueOnError="true" />
+  </Target>
+</Project>

@@ -24,7 +24,9 @@ public enum LiquifyMode
     TwistCCW = 4,
     PushLeft = 5,
     Reconstruct = 6,
-    Turbulence = 7
+    Turbulence = 7,
+    Freeze = 8,
+    Unfreeze = 9
 }
 
 /// <summary>
@@ -42,7 +44,8 @@ public sealed class BrushStroke
 /// <summary>
 /// GPU-accelerated Liquify effect for Paint.NET 5.x.
 /// Uses <see cref="SampleMapRenderer"/> with RGSS multisampling for high-quality distortion.
-/// Brush strokes are serialized as compact JSON and dispatched to the GPU in batches of 16
+/// Brush strokes are kept in-memory in the effect token and dispatched to the GPU in batches of 16.
+/// The effect performs local image processing only (no network or external I/O).
 /// via <see cref="LiquifySampleMapShader"/>.
 /// </summary>
 internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
@@ -199,6 +202,11 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
         int total = 0;
         foreach (var s in strokes)
         {
+            if (s.Mode == LiquifyMode.Freeze || s.Mode == LiquifyMode.Unfreeze)
+            {
+                continue;
+            }
+
             total += s.Points?.Count ?? 0;
         }
         return Math.Min(total, MaxPackedPoints);
@@ -284,6 +292,41 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
         var strokes = this.Token.Strokes;
         if (strokes == null || strokes.Count == 0) return;
 
+        int docWidth = Math.Max(1, this.Environment.Document.Size.Width);
+        int docHeight = Math.Max(1, this.Environment.Document.Size.Height);
+        bool[] freezeMask = new bool[docWidth * docHeight];
+
+        void PaintFreezeMaskAt(float cx, float cy, float radius, bool freeze)
+        {
+            float r2 = radius * radius;
+            int left = Math.Max(0, (int)(cx - radius));
+            int top = Math.Max(0, (int)(cy - radius));
+            int right = Math.Min(docWidth, (int)(cx + radius) + 1);
+            int bottom = Math.Min(docHeight, (int)(cy + radius) + 1);
+
+            for (int y = top; y < bottom; y++)
+            {
+                float dy = y - cy;
+                for (int x = left; x < right; x++)
+                {
+                    float dx = x - cx;
+                    if ((dx * dx + dy * dy) > r2)
+                    {
+                        continue;
+                    }
+
+                    freezeMask[y * docWidth + x] = freeze;
+                }
+            }
+        }
+
+        bool IsFrozenAt(float x, float y)
+        {
+            int ix = Math.Clamp((int)x, 0, docWidth - 1);
+            int iy = Math.Clamp((int)y, 0, docHeight - 1);
+            return freezeMask[iy * docWidth + ix];
+        }
+
         foreach (var s in strokes)
         {
             if (s.Points == null || s.Points.Count == 0) continue;
@@ -291,10 +334,24 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
             float strength = Math.Clamp((float)s.Strength, 0f, 1f);
             float density = Math.Clamp((float)s.Density, 0f, 1f);
             float mode = (float)(int)s.Mode;
+            bool isFreezeMode = s.Mode == LiquifyMode.Freeze;
+            bool isUnfreezeMode = s.Mode == LiquifyMode.Unfreeze;
 
             foreach (var pt in s.Points)
             {
                 if (pt.Length < 2) continue;
+
+                if (isFreezeMode || isUnfreezeMode)
+                {
+                    PaintFreezeMaskAt(pt[0], pt[1], radius, isFreezeMode);
+                    continue;
+                }
+
+                if (IsFrozenAt(pt[0], pt[1]))
+                {
+                    continue;
+                }
+
                 if (packedPoints.Count >= MaxPackedPoints) return;
                 packedPoints.Add(new PackedStrokePoint
                 {
@@ -480,13 +537,17 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
                     // Mode 6: Reconstruct — move sampling position back toward undistorted position
                     pos = Hlsl.Lerp(pos, originalPos, eff);
                 }
-                else
+                else if (mode < 7.5f)
                 {
                     // Mode 7: Turbulence — pseudo-random jitter
                     float factor = eff * 15f;
                     float hash1 = Hlsl.Frac(Hlsl.Sin(Hlsl.Dot(pos, new float2(12.9898f, 78.233f))) * 43758.5453f);
                     float hash2 = Hlsl.Frac(Hlsl.Sin(Hlsl.Dot(pos, new float2(39.346f, 11.135f))) * 43758.5453f);
                     pos += new float2(hash1 - 0.5f, hash2 - 0.5f) * factor;
+                }
+                else
+                {
+                    // Mode 8+: Freeze/Unfreeze are UI-only mask operations and do not directly warp.
                 }
             }
 

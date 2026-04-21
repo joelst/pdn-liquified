@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/DocumentRectify/">
+    <Project Path="DocumentRectify/DocumentRectifyPlugin.csproj" />
+  </Folder>
+  <Folder Name="/GridWarp/">
+    <Project Path="GridWarp/GridWarpPlugin.csproj" />
+  </Folder>
+  <Folder Name="/Liquify/">
+    <Project Path="Liquify/LiquifyPlugin.csproj" />
+  </Folder>
+</Solution>

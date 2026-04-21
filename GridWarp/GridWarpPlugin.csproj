@@ -1,31 +1,26 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- Set this to the location where you have Paint.NET installed. If you have the Microsoft
-         Store version, you should download the portable version and point this at that. -->
     <PdnRoot>C:\Program Files\paint.net</PdnRoot>
   </PropertyGroup>
   <PropertyGroup>
     <TargetFramework>net9.0-windows</TargetFramework>
-    <AssemblyName>LiquifyPlugin</AssemblyName>
-    <RootNamespace>LiquifyPlugin</RootNamespace>
+    <AssemblyName>GridWarpPlugin</AssemblyName>
+    <RootNamespace>GridWarpPlugin</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <UseWindowsForms>true</UseWindowsForms>
     <ImportWindowsDesktopTargets>true</ImportWindowsDesktopTargets>
-    <!-- Necessary so that the build copies the version of nuget packages we're referencing,
-         instead of copying the ones that Paint.NET is using (which may be trimmed and/or a different version) -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
     <Deterministic>False</Deterministic>
     <AssemblyVersion>5.1.*</AssemblyVersion>
-    <Description>Interactive brush-based liquify effect plugin for Paint.NET 5.x with GPU-accelerated rendering.</Description>
-    <Authors>Joel Stidley</Authors>
-    <Product>LiquifyPlugin</Product>
-    <Copyright>Copyright © 2025 Joel Stidley</Copyright>
+    <Description>Mesh-based grid warp distortion effect for Paint.NET 5.x with GPU-accelerated rendering.</Description>
+    <Authors>GridWarpPlugin Contributors</Authors>
+    <Product>GridWarpPlugin</Product>
+    <Copyright>Copyright © 2025 GridWarpPlugin Contributors</Copyright>
   </PropertyGroup>
   <PropertyGroup>
-    <!-- MSB3277 removes the harmless and unhelpful warning about assembly version "conflicts" -->
     <NoWarn>1701;1702;CS7035;MSB3277</NoWarn>
   </PropertyGroup>
   <ItemGroup>
@@ -41,11 +36,6 @@
     <PackageReference Include="Microsoft.NET.ILLink.Tasks" Version="9.0.0" />
   </ItemGroup>
   <ItemGroup>
-    <!-- Exclude decompiled Paint.NET sources from compilation -->
-    <Compile Remove="paintdotnet_src\**\*.cs" />
-
-    <!-- Be sure to set Private=False (aka CopyLocal=false) on the Paint.NET assemblies
-         so they are not copied to the output folder -->
     <Reference Include="PaintDotNet.Base">
       <HintPath>$(PdnRoot)\PaintDotNet.Base.dll</HintPath>
       <Private>False</Private>
@@ -100,19 +90,13 @@
     </Reference>
   </ItemGroup>
   <Target Name="TrimAndMerge" AfterTargets="PostBuildEvent" Condition="'$(ConfigurationName)' == 'Release'">
-    <!-- Trimming with ILLink. Note: "ComputeShare.D2D1" is intentionally misspelled so ILLink
-         skips trimming it (avoids BCL resolution errors). ILRepack still merges the real DLL. -->
     <Exec Command="dotnet exec &quot;$(PkgMicrosoft_NET_ILLink_Tasks)\tools\net9.0\illink.dll&quot; -a &quot;$(TargetPath)&quot; all --trim-mode copy --action copy -d $(TargetDir) --skip-unresolved --action link &quot;ComputeSharp.Core&quot; --action link &quot;ComputeShare.D2D1&quot; -out &quot;$(TargetDir)output&quot;" />
-    <!-- Merge with ILRepack -->
     <Exec Command="&quot;$(PkgILRepack)\tools\ilrepack&quot; /internalize /union &quot;$(TargetDir)output\$(TargetName).dll&quot; &quot;$(TargetDir)output\ComputeSharp.Core.dll&quot; &quot;$(TargetDir)output\ComputeSharp.D2D1.dll&quot; /lib:&quot;$(PdnRoot)&quot; /out:&quot;$(TargetPath)&quot;" />
-    <!-- Remove the output directory created by illink -->
     <Delete Files="$(TargetDir)output" ContinueOnError="false" />
     <RemoveDir Directories="$(TargetDir)output" ContinueOnError="false" />
-    <!-- Remove ComputeSharp DLLs that are now merged -->
     <Delete Files="$(TargetDir)ComputeSharp.Core.dll" ContinueOnError="false" />
     <Delete Files="$(TargetDir)ComputeSharp.D2D1.dll" ContinueOnError="false" />
   </Target>
-  <!-- Release deployment: copy plugin DLL to Paint.NET's Effects folder -->
   <Target Name="DeployToPaintDotNetEffects" AfterTargets="TrimAndMerge" Condition="'$(Configuration)' == 'Release' AND Exists('$(PdnRoot)')">
     <PropertyGroup>
       <EffectivePdnEffectsDir Condition="'$(PdnEffectsDirOverride)' != ''">$(PdnEffectsDirOverride)</EffectivePdnEffectsDir>
@@ -121,5 +105,13 @@
     <Message Text="Deploying plugin to $(EffectivePdnEffectsDir)" Importance="high" />
     <MakeDir Directories="$(EffectivePdnEffectsDir)" Condition="!Exists('$(EffectivePdnEffectsDir)')" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(EffectivePdnEffectsDir)" SkipUnchangedFiles="true" ContinueOnError="true" />
+  </Target>
+  <Target Name="DeployToUserEffects" AfterTargets="TrimAndMerge" Condition="'$(Configuration)' == 'Release'">
+    <PropertyGroup>
+      <UserPdnEffectsDir>$(USERPROFILE)\Documents\paint.net App Files\Effects</UserPdnEffectsDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(UserPdnEffectsDir)" Condition="!Exists('$(UserPdnEffectsDir)')" />
+    <Message Text="Deploying plugin to $(UserPdnEffectsDir)" Importance="high" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(UserPdnEffectsDir)" SkipUnchangedFiles="true" ContinueOnError="true" />
   </Target>
 </Project>

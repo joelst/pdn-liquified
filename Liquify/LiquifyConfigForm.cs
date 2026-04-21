@@ -18,12 +18,14 @@ namespace LiquifyPlugin;
 internal sealed class LiquifyConfigForm : EffectConfigForm2
 {
   // ── UI Controls ──────────────────────────────────────────
-  private ComboBox modeCombo = null!;
+  private FlowLayoutPanel modeButtonsPanel = null!;
+  private readonly List<Button> modeButtons = new();
   private Label modeDescLabel = null!;
   private TrackBar brushSizeSlider = null!, strengthSlider = null!, densitySlider = null!, qualitySlider = null!;
   private Label brushSizeValue = null!, strengthValue = null!, densityValue = null!, qualityValue = null!;
   private Button undoBtn = null!, redoBtn = null!, resetBtn = null!;
   private Panel canvas = null!;
+  private LiquifyMode selectedMode = LiquifyMode.ForwardWarp;
 
   // ── Canvas / interaction state ───────────────────────────
   private float zoom = 1f;
@@ -37,11 +39,18 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
   private readonly List<BrushStroke> strokes = new();
   private readonly List<BrushStroke> redoStack = new();
   private BrushStroke? currentStroke;
+  private bool[] freezeMask = Array.Empty<bool>();
+  private Surface? freezeOverlaySurface;
+  private int frozenPixelCount;
+  private bool suppressFreezeInvalidate;
 
   // ── CPU preview surfaces ─────────────────────────────────
   private Surface? origSurface;
   private Surface? workSurface;
   private Surface? snapSurface;
+
+  private static readonly ColorBgra FreezeOverlayColor = ColorBgra.FromBgra(255, 64, 0, 80);
+  private static readonly ColorBgra TransparentOverlayColor = ColorBgra.FromBgra(0, 0, 0, 0);
 
   // ── Constants ────────────────────────────────────────────
   private const float MinZoom = 0.1f;
@@ -52,6 +61,36 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
   private static readonly Color LabelColor = Color.FromArgb(220, 220, 220);
   private static readonly Color PanelBg = Color.FromArgb(45, 45, 48);
   private static readonly Color ControlBg = Color.FromArgb(60, 60, 65);
+  private static readonly Color SelectedModeButtonBg = Color.FromArgb(84, 122, 190);
+  private readonly ToolTip uiToolTip = new();
+
+  private readonly struct ModeUiEntry
+  {
+    public ModeUiEntry(LiquifyMode mode, string name, string icon)
+    {
+      Mode = mode;
+      Name = name;
+      Icon = icon;
+    }
+
+    public LiquifyMode Mode { get; }
+    public string Name { get; }
+    public string Icon { get; }
+  }
+
+  private static readonly ModeUiEntry[] ModeEntries =
+  {
+    new(LiquifyMode.ForwardWarp, "Forward Warp", "FW"),
+    new(LiquifyMode.Pucker, "Pucker", "PK"),
+    new(LiquifyMode.Bloat, "Bloat", "BL"),
+    new(LiquifyMode.TwistCW, "Twist CW", "CW"),
+    new(LiquifyMode.TwistCCW, "Twist CCW", "CC"),
+    new(LiquifyMode.PushLeft, "Push Left", "PL"),
+    new(LiquifyMode.Reconstruct, "Reconstruct", "RC"),
+    new(LiquifyMode.Turbulence, "Turbulence", "TB"),
+    new(LiquifyMode.Freeze, "Freeze", "FZ"),
+    new(LiquifyMode.Unfreeze, "Unfreeze", "UF")
+  };
 
   private bool initialFitDone;
   private readonly float _dpi;
@@ -91,7 +130,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
     redoStack.Clear();
 
     // Guard: controls may not exist yet if called during base constructor
-    if (modeCombo != null)
+    if (modeButtonsPanel != null)
       SyncUIFromToken(token);
 
     RegeneratePreview();
@@ -101,7 +140,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
   {
     var token = (LiquifyConfigToken)dstToken;
 
-    token.Mode = (LiquifyMode)modeCombo.SelectedIndex;
+    token.Mode = selectedMode;
     token.BrushSize = brushSizeSlider.Value;
     token.Strength = strengthSlider.Value / 100.0;
     token.Density = densitySlider.Value / 100.0;
@@ -128,6 +167,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
       {
         origSurface?.Dispose();
         workSurface?.Dispose();
+        freezeOverlaySurface?.Dispose();
         origSurface = new Surface(size.Width, size.Height);
         unsafe
         {
@@ -135,6 +175,9 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
               (uint)origSurface.Scan0.Length, null);
         }
         workSurface = origSurface.Clone();
+        freezeOverlaySurface = new Surface(size.Width, size.Height);
+        freezeMask = new bool[size.Width * size.Height];
+        frozenPixelCount = 0;
         RegeneratePreview();
         // Defer FitToWindow until after layout is complete so canvas has its real size
         initialFitDone = false;
@@ -180,26 +223,22 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
     leftPanel.Controls.Add(MakeAutoLabel("Mode:"));
 
-    modeCombo = new ComboBox
+    modeButtonsPanel = new FlowLayoutPanel
     {
       Width = ctrlW,
-      DropDownStyle = ComboBoxStyle.DropDownList,
-      FlatStyle = FlatStyle.Flat,
-      BackColor = ControlBg,
-      ForeColor = LabelColor,
+      AutoSize = true,
+      AutoSizeMode = AutoSizeMode.GrowAndShrink,
+      FlowDirection = FlowDirection.LeftToRight,
+      WrapContents = true,
+      BackColor = Color.Transparent,
       Margin = new Padding(0, 0, 0, S(4))
     };
-    modeCombo.Items.AddRange(new object[]
-    {
-            "Forward Warp", "Pucker", "Bloat", "Twist CW",
-            "Twist CCW", "Push Left", "Reconstruct", "Turbulence"
-    });
-    modeCombo.SelectedIndex = 0;
-    leftPanel.Controls.Add(modeCombo);
+    BuildModeButtons();
+    leftPanel.Controls.Add(modeButtonsPanel);
 
     modeDescLabel = new Label
     {
-      Text = GetModeDescription(0),
+      Text = GetModeDescription((int)selectedMode),
       AutoSize = true,
       MaximumSize = new Size(ctrlW, 0),
       ForeColor = Color.FromArgb(160, 170, 180),
@@ -242,9 +281,9 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
       Margin = new Padding(0, S(2), 0, S(2)),
       BackColor = Color.Transparent
     };
-    undoBtn = MakeButton("Undo");
-    redoBtn = MakeButton("Redo");
-    resetBtn = MakeButton("Reset");
+    undoBtn = MakeIconButton("\u21B6", "Undo last stroke");
+    redoBtn = MakeIconButton("\u21B7", "Redo last undone stroke");
+    resetBtn = MakeIconButton("\u21BA", "Clear all strokes");
     actionRow.Controls.AddRange(new Control[] { undoBtn, redoBtn, resetBtn });
     leftPanel.Controls.Add(actionRow);
 
@@ -289,11 +328,11 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
   private void WireEvents()
   {
-    modeCombo.SelectedIndexChanged += (_, _) =>
-    {
-      modeDescLabel.Text = GetModeDescription(modeCombo.SelectedIndex);
-      PushUpdate();
-    };
+    uiToolTip.SetToolTip(brushSizeSlider, "Brush radius in pixels");
+    uiToolTip.SetToolTip(strengthSlider, "Displacement strength per stroke");
+    uiToolTip.SetToolTip(densitySlider, "Brush falloff density");
+    uiToolTip.SetToolTip(qualitySlider, "RGSS quality for final render");
+    uiToolTip.SetToolTip(canvas, "Left-click paint, right-click pan, wheel zoom");
 
     brushSizeSlider.ValueChanged += (_, _) =>
     {
@@ -370,6 +409,12 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
       g.DrawRectangle(pen, imgRect.X, imgRect.Y, imgRect.Width, imgRect.Height);
     }
 
+    if (freezeOverlaySurface != null && frozenPixelCount > 0)
+    {
+      using var overlayBmp = freezeOverlaySurface.CreateAliasedBitmap();
+      g.DrawImage(overlayBmp, imgRect);
+    }
+
     // Brush cursor
     var mpt = canvas.PointToClient(MousePosition);
     if (canvas.ClientRectangle.Contains(mpt))
@@ -386,7 +431,14 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
     float r = brushSizeSlider.Value * 0.5f * zoom;
 
-    using var pen = new Pen(Color.Lime, 1.5f);
+    Color cursorColor = selectedMode switch
+    {
+      LiquifyMode.Freeze => Color.Orange,
+      LiquifyMode.Unfreeze => Color.Cyan,
+      _ => Color.Lime
+    };
+
+    using var pen = new Pen(cursorColor, 1.5f);
     if (r > 2f)
     {
       g.DrawEllipse(pen, mousePos.X - r, mousePos.Y - r, r * 2, r * 2);
@@ -399,7 +451,8 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
     }
     else
     {
-      g.FillEllipse(Brushes.Lime, mousePos.X - 1, mousePos.Y - 1, 2, 2);
+      using var dotBrush = new SolidBrush(cursorColor);
+      g.FillEllipse(dotBrush, mousePos.X - 1, mousePos.Y - 1, 2, 2);
     }
   }
 
@@ -416,10 +469,17 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
       var ip = ScreenToImage(e.Location);
       if (ip.X >= 0 && ip.Y >= 0 && ip.X < origSurface.Width && ip.Y < origSurface.Height)
       {
+        LiquifyMode mode = selectedMode;
+        bool isFreezeMode = mode == LiquifyMode.Freeze || mode == LiquifyMode.Unfreeze;
+        if (!isFreezeMode && IsPointFrozen(ip))
+        {
+          return;
+        }
+
         isDrawing = true;
         currentStroke = new BrushStroke
         {
-          Mode = (LiquifyMode)modeCombo.SelectedIndex,
+          Mode = mode,
           BrushSize = brushSizeSlider.Value,
           Strength = strengthSlider.Value / 100.0,
           Density = densitySlider.Value / 100.0
@@ -428,7 +488,15 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
         snapSurface = workSurface!.Clone();
         currentStroke.Points.Add(new[] { ip.X, ip.Y });
         lastBrushPt = ip;
-        ApplyBrushAt(ip, currentStroke);
+
+        if (isFreezeMode)
+        {
+          PaintFreezeMaskAtPoint(ip, currentStroke.BrushSize, mode == LiquifyMode.Freeze);
+        }
+        else
+        {
+          ApplyBrushAt(ip, currentStroke);
+        }
       }
     }
     else if (e.Button == MouseButtons.Right)
@@ -450,8 +518,19 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
         float dy = ip.Y - lastBrushPt.Y;
         if (dx * dx + dy * dy >= 4f)
         {
-          currentStroke.Points.Add(new[] { ip.X, ip.Y });
-          ApplyBrushAt(ip, currentStroke);
+          bool isFreezeMode = currentStroke.Mode == LiquifyMode.Freeze || currentStroke.Mode == LiquifyMode.Unfreeze;
+
+          if (isFreezeMode)
+          {
+            currentStroke.Points.Add(new[] { ip.X, ip.Y });
+            PaintFreezeMaskAtPoint(ip, currentStroke.BrushSize, currentStroke.Mode == LiquifyMode.Freeze);
+          }
+          else if (!IsPointFrozen(ip))
+          {
+            currentStroke.Points.Add(new[] { ip.X, ip.Y });
+            ApplyBrushAt(ip, currentStroke);
+          }
+
           lastBrushPt = ip;
         }
       }
@@ -545,6 +624,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
   {
     strokes.Clear();
     redoStack.Clear();
+    ClearFreezeMask();
     RegeneratePreview();
     UpdateButtons();
     PushUpdate();
@@ -575,6 +655,11 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
       float dy = py - center.Y;
       for (int px = left; px < right; px++)
       {
+        if (freezeMask.Length != 0 && freezeMask[py * workSurface.Width + px])
+        {
+          continue;
+        }
+
         float dx = px - center.X;
         float d2 = dx * dx + dy * dy;
         if (d2 > r2 || d2 < 0.0001f) continue;
@@ -592,9 +677,12 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
     }
 
     // Invalidate the affected screen region
-    var screenRect = ImageToScreen(new RectangleF(left, top, right - left, bottom - top));
-    screenRect.Inflate(2, 2);
-    canvas.Invalidate(screenRect);
+    if (!suppressFreezeInvalidate)
+    {
+      var screenRect = ImageToScreen(new RectangleF(left, top, right - left, bottom - top));
+      screenRect.Inflate(2, 2);
+      canvas.Invalidate(screenRect);
+    }
   }
 
   private void RegeneratePreview()
@@ -602,8 +690,9 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
     if (origSurface == null || workSurface == null) return;
 
     CopySurface(origSurface, workSurface);
+    RebuildFreezeMaskFromStrokes();
 
-    // Flatten all stroke points with precomputed parameters
+    // Flatten all stroke points with precomputed parameters, preserving stroke order.
     var allPoints = new List<(float cx, float cy, float radius, float strength, float density, LiquifyMode mode)>();
     float globalLeft = float.MaxValue, globalTop = float.MaxValue;
     float globalRight = float.MinValue, globalBottom = float.MinValue;
@@ -628,7 +717,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
       return;
     }
 
-    // Per-pixel displacement accumulation (matches GPU SampleMapShader)
+    // Per-pixel displacement accumulation, with Freeze/Unfreeze respected in stroke order.
     int w = workSurface.Width, h = workSurface.Height;
     int left = Math.Max(0, (int)globalLeft);
     int top = Math.Max(0, (int)globalTop);
@@ -639,6 +728,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
     {
       for (int px = left; px < right; px++)
       {
+        bool frozen = false;
         float posX = px;
         float posY = py;
         float origX = px;
@@ -646,11 +736,39 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
         foreach (var sp in allPoints)
         {
+          float maskDx = px - sp.cx;
+          float maskDy = py - sp.cy;
+          float maskDist2 = maskDx * maskDx + maskDy * maskDy;
           float r2 = sp.radius * sp.radius;
+          if (maskDist2 > r2 || maskDist2 < 1e-6f)
+          {
+            continue;
+          }
+
+          if (sp.mode == LiquifyMode.Freeze)
+          {
+            frozen = true;
+            continue;
+          }
+
+          if (sp.mode == LiquifyMode.Unfreeze)
+          {
+            frozen = false;
+            continue;
+          }
+
+          if (frozen)
+          {
+            continue;
+          }
+
           float dx = posX - sp.cx;
           float dy = posY - sp.cy;
           float d2 = dx * dx + dy * dy;
-          if (d2 > r2 || d2 < 1e-6f) continue;
+          if (d2 > r2 || d2 < 1e-6f)
+          {
+            continue;
+          }
 
           float dist = MathF.Sqrt(d2);
           float invR = 1f / sp.radius;
@@ -706,6 +824,9 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
                 posY += (hash2 - 0.5f) * eff * 15f;
                 break;
               }
+            case LiquifyMode.Freeze:
+            case LiquifyMode.Unfreeze:
+              break;
           }
         }
 
@@ -804,6 +925,9 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
           sy += (hash2 - 0.5f) * eff * 15f;
           break;
         }
+      case LiquifyMode.Freeze:
+      case LiquifyMode.Unfreeze:
+        break;
     }
 
     return new PointF(sx, sy);
@@ -832,6 +956,103 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
         dst[x, y] = src[x, y];
       }
     }
+  }
+
+  private bool IsPointFrozen(PointF point)
+  {
+    if (origSurface == null || freezeMask.Length == 0)
+      return false;
+
+    int x = Math.Clamp((int)point.X, 0, origSurface.Width - 1);
+    int y = Math.Clamp((int)point.Y, 0, origSurface.Height - 1);
+    return freezeMask[y * origSurface.Width + x];
+  }
+
+  private void ClearFreezeMask()
+  {
+    if (origSurface == null)
+      return;
+
+    int pixelCount = origSurface.Width * origSurface.Height;
+    if (freezeMask.Length != pixelCount)
+      freezeMask = new bool[pixelCount];
+    else
+      Array.Clear(freezeMask, 0, freezeMask.Length);
+
+    frozenPixelCount = 0;
+
+    freezeOverlaySurface?.Dispose();
+    freezeOverlaySurface = new Surface(origSurface.Width, origSurface.Height);
+
+    for (int y = 0; y < freezeOverlaySurface.Height; y++)
+    {
+      for (int x = 0; x < freezeOverlaySurface.Width; x++)
+      {
+        freezeOverlaySurface[x, y] = TransparentOverlayColor;
+      }
+    }
+  }
+
+  private void PaintFreezeMaskAtPoint(PointF center, int brushSize, bool freeze)
+  {
+    if (origSurface == null || freezeOverlaySurface == null || freezeMask.Length == 0)
+      return;
+
+    float radius = Math.Max(1f, brushSize * 0.5f);
+    float r2 = radius * radius;
+    int left = Math.Max(0, (int)(center.X - radius));
+    int top = Math.Max(0, (int)(center.Y - radius));
+    int right = Math.Min(origSurface.Width, (int)(center.X + radius) + 1);
+    int bottom = Math.Min(origSurface.Height, (int)(center.Y + radius) + 1);
+
+    for (int py = top; py < bottom; py++)
+    {
+      float dy = py - center.Y;
+      for (int px = left; px < right; px++)
+      {
+        float dx = px - center.X;
+        if ((dx * dx + dy * dy) > r2)
+          continue;
+
+        int idx = py * origSurface.Width + px;
+        bool old = freezeMask[idx];
+        if (old == freeze)
+          continue;
+
+        freezeMask[idx] = freeze;
+        frozenPixelCount += freeze ? 1 : -1;
+        freezeOverlaySurface[px, py] = freeze ? FreezeOverlayColor : TransparentOverlayColor;
+      }
+    }
+
+    var screenRect = ImageToScreen(new RectangleF(left, top, right - left, bottom - top));
+    screenRect.Inflate(2, 2);
+    canvas.Invalidate(screenRect);
+  }
+
+  private void RebuildFreezeMaskFromStrokes()
+  {
+    if (origSurface == null)
+      return;
+
+    ClearFreezeMask();
+
+    foreach (var stroke in strokes)
+    {
+      if (stroke.Mode != LiquifyMode.Freeze && stroke.Mode != LiquifyMode.Unfreeze)
+        continue;
+
+      bool freeze = stroke.Mode == LiquifyMode.Freeze;
+      foreach (var pt in stroke.Points)
+      {
+        if (pt.Length < 2)
+          continue;
+
+        PaintFreezeMaskAtPoint(new PointF(pt[0], pt[1]), stroke.BrushSize, freeze);
+      }
+    }
+
+    suppressFreezeInvalidate = false;
   }
 
   // ═════════════════════════════════════════════════════════
@@ -886,7 +1107,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
   private void SyncUIFromToken(LiquifyConfigToken token)
   {
-    modeCombo.SelectedIndex = Math.Clamp((int)token.Mode, 0, modeCombo.Items.Count - 1);
+    SetSelectedMode(token.Mode, pushUpdate: false);
     brushSizeSlider.Value = Math.Clamp(token.BrushSize, brushSizeSlider.Minimum, brushSizeSlider.Maximum);
     strengthSlider.Value = Math.Clamp((int)(token.Strength * 100), strengthSlider.Minimum, strengthSlider.Maximum);
     densitySlider.Value = Math.Clamp((int)(token.Density * 100), densitySlider.Minimum, densitySlider.Maximum);
@@ -948,6 +1169,278 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
       Padding = new Padding(S(8), S(2), S(8), S(2)),
       Margin = new Padding(0, 0, S(4), 0)
     };
+  }
+
+  private Button MakeIconButton(string icon, string tooltip)
+  {
+    Button btn = MakeButton(icon);
+    btn.MinimumSize = new Size(S(34), S(30));
+    btn.Padding = new Padding(S(6), S(2), S(6), S(2));
+    uiToolTip.SetToolTip(btn, tooltip);
+    return btn;
+  }
+
+  private void BuildModeButtons()
+  {
+    modeButtons.Clear();
+    modeButtonsPanel.Controls.Clear();
+
+    int btnW = S(38);
+    int btnH = S(32);
+    int iconSize = S(20);
+
+    foreach (var entry in ModeEntries)
+    {
+      var button = new Button
+      {
+        Text = string.Empty,
+        Tag = entry.Mode,
+        Width = btnW,
+        Height = btnH,
+        FlatStyle = FlatStyle.Flat,
+        BackColor = ControlBg,
+        ForeColor = LabelColor,
+        Margin = new Padding(0, 0, S(4), S(4)),
+        Image = CreateModeIcon(entry.Mode, iconSize, LabelColor),
+        ImageAlign = ContentAlignment.MiddleCenter
+      };
+      button.FlatAppearance.BorderColor = Color.FromArgb(90, 90, 95);
+      button.FlatAppearance.BorderSize = 1;
+      button.Click += ModeButton_Click;
+      modeButtons.Add(button);
+      modeButtonsPanel.Controls.Add(button);
+
+      string tooltip = entry.Name + System.Environment.NewLine + GetModeDescription((int)entry.Mode);
+      uiToolTip.SetToolTip(button, tooltip);
+    }
+
+    UpdateModeButtonStyles();
+  }
+
+  /// <summary>
+  /// Procedurally render a glyph icon for a liquify mode. Avoids shipping image assets.
+  /// </summary>
+  private static Bitmap CreateModeIcon(LiquifyMode mode, int size, Color color)
+  {
+    var bmp = new Bitmap(size, size);
+    using var g = Graphics.FromImage(bmp);
+    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+
+    float pad = size * 0.15f;
+    float cx = size / 2f;
+    float cy = size / 2f;
+    float r = size / 2f - pad;
+    float strokeW = Math.Max(1.4f, size / 14f);
+
+    using var pen = new Pen(color, strokeW)
+    {
+      StartCap = System.Drawing.Drawing2D.LineCap.Round,
+      EndCap = System.Drawing.Drawing2D.LineCap.Round,
+      LineJoin = System.Drawing.Drawing2D.LineJoin.Round
+    };
+    using var brush = new SolidBrush(color);
+
+    switch (mode)
+    {
+      case LiquifyMode.ForwardWarp:
+        {
+          // Curved arrow sweeping right.
+          float y = cy;
+          var path = new System.Drawing.Drawing2D.GraphicsPath();
+          path.AddBezier(pad, y + r * 0.4f, cx - r * 0.2f, y - r * 0.6f, cx + r * 0.2f, y + r * 0.4f, size - pad - strokeW, y - r * 0.2f);
+          g.DrawPath(pen, path);
+          // Arrowhead.
+          float hx = size - pad - strokeW;
+          float hy = y - r * 0.2f;
+          DrawArrowHead(g, brush, hx, hy, 1f, -0.3f, size * 0.18f);
+          break;
+        }
+      case LiquifyMode.Pucker:
+        {
+          // 4 arrows pointing inward.
+          DrawDirArrow(g, pen, brush, cx, cy, 1, 0, r, size, inward: true);
+          DrawDirArrow(g, pen, brush, cx, cy, -1, 0, r, size, inward: true);
+          DrawDirArrow(g, pen, brush, cx, cy, 0, 1, r, size, inward: true);
+          DrawDirArrow(g, pen, brush, cx, cy, 0, -1, r, size, inward: true);
+          // Center dot.
+          float d = strokeW * 1.2f;
+          g.FillEllipse(brush, cx - d, cy - d, d * 2, d * 2);
+          break;
+        }
+      case LiquifyMode.Bloat:
+        {
+          // 4 arrows pointing outward.
+          DrawDirArrow(g, pen, brush, cx, cy, 1, 0, r, size, inward: false);
+          DrawDirArrow(g, pen, brush, cx, cy, -1, 0, r, size, inward: false);
+          DrawDirArrow(g, pen, brush, cx, cy, 0, 1, r, size, inward: false);
+          DrawDirArrow(g, pen, brush, cx, cy, 0, -1, r, size, inward: false);
+          float d = strokeW * 1.2f;
+          g.FillEllipse(brush, cx - d, cy - d, d * 2, d * 2);
+          break;
+        }
+      case LiquifyMode.TwistCW:
+        {
+          DrawCircularArrow(g, pen, brush, cx, cy, r * 0.85f, clockwise: true, size);
+          break;
+        }
+      case LiquifyMode.TwistCCW:
+        {
+          DrawCircularArrow(g, pen, brush, cx, cy, r * 0.85f, clockwise: false, size);
+          break;
+        }
+      case LiquifyMode.PushLeft:
+        {
+          // Two parallel right-pointing arrows offset vertically (perpendicular push hint).
+          float ah = size * 0.16f;
+          float yTop = cy - r * 0.45f;
+          float yBot = cy + r * 0.45f;
+          g.DrawLine(pen, pad, yTop, size - pad - ah, yTop);
+          DrawArrowHead(g, brush, size - pad - ah, yTop, 1, 0, ah);
+          g.DrawLine(pen, pad, yBot, size - pad - ah, yBot);
+          DrawArrowHead(g, brush, size - pad - ah, yBot, 1, 0, ah);
+          break;
+        }
+      case LiquifyMode.Reconstruct:
+        {
+          // Counter-clockwise restore arrow (3/4 circle with arrowhead pointing down-left).
+          var rect = new RectangleF(cx - r * 0.7f, cy - r * 0.7f, r * 1.4f, r * 1.4f);
+          g.DrawArc(pen, rect, -45f, -270f);
+          // Arrowhead at end of arc (top-right area, pointing tangentially).
+          double endAngle = (-45 - 270) * Math.PI / 180.0;
+          float ex = cx + (r * 0.7f) * (float)Math.Cos(endAngle);
+          float ey = cy + (r * 0.7f) * (float)Math.Sin(endAngle);
+          DrawArrowHead(g, brush, ex, ey, (float)-Math.Sin(endAngle), (float)Math.Cos(endAngle), size * 0.18f);
+          break;
+        }
+      case LiquifyMode.Turbulence:
+        {
+          // Sine wave.
+          var pts = new PointF[24];
+          for (int i = 0; i < pts.Length; i++)
+          {
+            float t = i / (float)(pts.Length - 1);
+            float x = pad + t * (size - 2 * pad);
+            float y = cy + (float)Math.Sin(t * Math.PI * 2.5) * r * 0.5f;
+            pts[i] = new PointF(x, y);
+          }
+          g.DrawCurve(pen, pts);
+          break;
+        }
+      case LiquifyMode.Freeze:
+        {
+          // Snowflake: 3 lines through center + tiny tick marks.
+          DrawSnowflake(g, pen, cx, cy, r, strokeW);
+          break;
+        }
+      case LiquifyMode.Unfreeze:
+        {
+          DrawSnowflake(g, pen, cx, cy, r * 0.85f, strokeW);
+          // Diagonal slash to indicate "remove freeze".
+          using var slashPen = new Pen(color, strokeW * 1.2f)
+          {
+            StartCap = System.Drawing.Drawing2D.LineCap.Round,
+            EndCap = System.Drawing.Drawing2D.LineCap.Round
+          };
+          g.DrawLine(slashPen, pad, size - pad, size - pad, pad);
+          break;
+        }
+    }
+    return bmp;
+  }
+
+  private static void DrawArrowHead(Graphics g, Brush brush, float tipX, float tipY, float dx, float dy, float len)
+  {
+    // dx,dy is the direction the arrow points.
+    float mag = MathF.Sqrt(dx * dx + dy * dy);
+    if (mag < 1e-4f) return;
+    dx /= mag; dy /= mag;
+    float px = -dy, py = dx; // perpendicular
+    var p1 = new PointF(tipX, tipY);
+    var p2 = new PointF(tipX - dx * len + px * len * 0.5f, tipY - dy * len + py * len * 0.5f);
+    var p3 = new PointF(tipX - dx * len - px * len * 0.5f, tipY - dy * len - py * len * 0.5f);
+    g.FillPolygon(brush, new[] { p1, p2, p3 });
+  }
+
+  private static void DrawDirArrow(Graphics g, Pen pen, Brush brush, float cx, float cy, float dx, float dy, float r, int size, bool inward)
+  {
+    float ah = size * 0.16f;
+    float gap = size * 0.18f;
+    float startMag = inward ? r : gap;
+    float endMag = inward ? gap : r;
+    float sx = cx + dx * startMag;
+    float sy = cy + dy * startMag;
+    float ex = cx + dx * endMag;
+    float ey = cy + dy * endMag;
+    g.DrawLine(pen, sx, sy, ex, ey);
+    DrawArrowHead(g, brush, ex, ey, ex - sx, ey - sy, ah);
+  }
+
+  private static void DrawCircularArrow(Graphics g, Pen pen, Brush brush, float cx, float cy, float r, bool clockwise, int size)
+  {
+    var rect = new RectangleF(cx - r, cy - r, r * 2, r * 2);
+    float startAngle = clockwise ? 200f : -20f;
+    float sweep = clockwise ? 250f : -250f;
+    g.DrawArc(pen, rect, startAngle, sweep);
+    double endDeg = (startAngle + sweep) * Math.PI / 180.0;
+    float ex = cx + r * (float)Math.Cos(endDeg);
+    float ey = cy + r * (float)Math.Sin(endDeg);
+    // Tangent direction.
+    float tx = (float)-Math.Sin(endDeg) * (clockwise ? 1 : -1);
+    float ty = (float)Math.Cos(endDeg) * (clockwise ? 1 : -1);
+    DrawArrowHead(g, brush, ex, ey, tx, ty, size * 0.2f);
+  }
+
+  private static void DrawSnowflake(Graphics g, Pen pen, float cx, float cy, float r, float strokeW)
+  {
+    for (int i = 0; i < 3; i++)
+    {
+      double ang = i * Math.PI / 3.0;
+      float dx = (float)Math.Cos(ang) * r;
+      float dy = (float)Math.Sin(ang) * r;
+      g.DrawLine(pen, cx - dx, cy - dy, cx + dx, cy + dy);
+      // Small V tips on each end.
+      float tipLen = r * 0.3f;
+      float perpX = -dy / r;
+      float perpY = dx / r;
+      g.DrawLine(pen, cx + dx, cy + dy, cx + dx - dx * 0.3f + perpX * tipLen * 0.6f, cy + dy - dy * 0.3f + perpY * tipLen * 0.6f);
+      g.DrawLine(pen, cx + dx, cy + dy, cx + dx - dx * 0.3f - perpX * tipLen * 0.6f, cy + dy - dy * 0.3f - perpY * tipLen * 0.6f);
+      g.DrawLine(pen, cx - dx, cy - dy, cx - dx + dx * 0.3f + perpX * tipLen * 0.6f, cy - dy + dy * 0.3f + perpY * tipLen * 0.6f);
+      g.DrawLine(pen, cx - dx, cy - dy, cx - dx + dx * 0.3f - perpX * tipLen * 0.6f, cy - dy + dy * 0.3f - perpY * tipLen * 0.6f);
+    }
+  }
+
+  private void ModeButton_Click(object? sender, EventArgs e)
+  {
+    if (sender is not Button button || button.Tag is not LiquifyMode mode)
+      return;
+
+    SetSelectedMode(mode, pushUpdate: true);
+  }
+
+  private void SetSelectedMode(LiquifyMode mode, bool pushUpdate)
+  {
+    selectedMode = mode;
+    modeDescLabel.Text = GetModeDescription((int)mode);
+    UpdateModeButtonStyles();
+    canvas?.Invalidate();
+
+    if (pushUpdate)
+      PushUpdate();
+  }
+
+  private void UpdateModeButtonStyles()
+  {
+    for (int i = 0; i < modeButtons.Count; i++)
+    {
+      Button button = modeButtons[i];
+      bool isSelected = button.Tag is LiquifyMode mode && mode == selectedMode;
+      button.BackColor = isSelected ? SelectedModeButtonBg : ControlBg;
+      button.ForeColor = LabelColor;
+      button.FlatAppearance.BorderColor = isSelected
+        ? Color.FromArgb(170, 205, 255)
+        : Color.FromArgb(90, 90, 95);
+    }
   }
 
   private (TrackBar slider, Label valueLabel) AddSlider(
@@ -1019,6 +1512,8 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
     5 => "Shift pixels perpendicular to the drag direction.",
     6 => "Restore displaced pixels back toward their original position.",
     7 => "Add random noise to pixel positions within the brush.",
+    8 => "Protect areas from future liquify strokes. Frozen regions show an overlay.",
+    9 => "Erase frozen protection so later strokes can affect those pixels again.",
     _ => ""
   };
 
@@ -1044,6 +1539,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
       origSurface?.Dispose();
       workSurface?.Dispose();
       snapSurface?.Dispose();
+      freezeOverlaySurface?.Dispose();
     }
     base.OnDispose(disposing);
   }
