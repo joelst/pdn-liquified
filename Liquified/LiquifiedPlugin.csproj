@@ -6,8 +6,8 @@
   </PropertyGroup>
   <PropertyGroup>
     <TargetFramework>net9.0-windows</TargetFramework>
-    <AssemblyName>LiquifyPlugin</AssemblyName>
-    <RootNamespace>LiquifyPlugin</RootNamespace>
+    <AssemblyName>LiquifiedPlugin</AssemblyName>
+    <RootNamespace>LiquifiedPlugin</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -17,10 +17,10 @@
     <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
     <Deterministic>False</Deterministic>
     <AssemblyVersion>5.1.*</AssemblyVersion>
-    <Description>Interactive brush-based liquify effect plugin for Paint.NET 5.x with GPU-accelerated rendering.</Description>
-    <Authors>LiquifyPlugin Contributors</Authors>
-    <Product>LiquifyPlugin</Product>
-    <Copyright>Copyright © 2025 LiquifyPlugin Contributors</Copyright>
+    <Description>Interactive brush-based liquified effect plugin for Paint.NET 5.x with GPU-accelerated rendering.</Description>
+    <Authors>LiquifiedPlugin Contributors</Authors>
+    <Product>LiquifiedPlugin</Product>
+    <Copyright>Copyright © 2025 LiquifiedPlugin Contributors</Copyright>
   </PropertyGroup>
   <PropertyGroup>
     <NoWarn>1701;1702;CS7035;MSB3277</NoWarn>
