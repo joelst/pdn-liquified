@@ -1,8 +1,9 @@
 # Paint.NET Distortion Plugins (Liquified, Grid Warp, Document Rectify)
 
-GPU-accelerated distortion effects for Paint.NET 5.x: interactive brush-based liquified, mesh-based grid warp, and document perspective rectification.
+GPU-accelerated and high-DPI compatable distortion effects for Paint.NET 5.x: interactive brush-based liquified, mesh-based grid warp, and document perspective rectification.
 
-📖 **Documentation:**
+**Documentation:**
+
 - [Installation Guide](./INSTALL.md) — Step-by-step installation instructions and troubleshooting
 - [Release Notes](./RELEASES.md) — How to create releases and distribution guide
 - [Security Policy](./SECURITY.md) — Reporting security issues
@@ -46,6 +47,7 @@ dotnet build -c Release LiquifiedPlugins.slnx      # Release (IL trim + ILRepack
 Override the install path with `/p:PdnRoot="<path>"`.
 
 Release builds automatically:
+
 1. Trim unused IL via `Microsoft.NET.ILLink`
 2. Merge ComputeSharp assemblies via ILRepack
 3. Copy each plugin DLL to `$(PdnRoot)\Effects\` (may require admin)
@@ -58,6 +60,7 @@ There are no automated tests. Verify by loading Paint.NET and running all three 
 ### For End Users (from Release Builds)
 
 **Quick Install:**
+
 1. Download the latest release from [Releases](../../releases/latest)
 2. Double-click `install-plugins.bat`
 3. Done! Restart Paint.NET
@@ -65,10 +68,13 @@ There are no automated tests. Verify by loading Paint.NET and running all three 
 For detailed instructions, troubleshooting, and manual installation, see [INSTALL.md](./INSTALL.md).
 
 ### For End Users (from Release Builds - Step by Step)
+
 2. **Run the installer script** (recommended):
+
    ```powershell
    .\install-plugins.ps1
    ```
+
    The script will:
    - Detect your Paint.NET installation directory
    - Copy plugin DLLs to both system and user plugin folders
@@ -93,6 +99,7 @@ For detailed instructions, troubleshooting, and manual installation, see [INSTAL
 ### For Developers (from Source)
 
 Build and deploy locally:
+
 ```powershell
 cd pdn-liquified
 dotnet build -c Release LiquifiedPlugins.slnx
@@ -156,7 +163,3 @@ This repository includes a GitHub Actions workflow at `.github/workflows/build.y
 - Runtime state is limited to in-memory effect tokens and Paint.NET-provided image surfaces.
 - Project metadata avoids embedding personal contact information.
 - Before publishing changes, run a quick secret/PII scan and review generated logs/artifacts before commit.
-
-## Roadmap
-
-- **Smudge Brush** -- finger-paint style brush that picks up and pushes color along the stroke. Requires full custom CPU/GPU implementation (Paint.NET has no native smudge mode).
