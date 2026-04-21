@@ -57,18 +57,18 @@ For detailed installation steps and troubleshooting, see [INSTALL.md](./INSTALL.
    ```powershell
    $version = "1.0.0"
    mkdir "pdn-liquified-v$version"
-   
+
    # Copy DLLs
    copy "Liquified\bin\Release\net9.0-windows\LiquifiedPlugin.dll" "pdn-liquified-v$version\"
    copy "GridWarp\bin\Release\net9.0-windows\GridWarpPlugin.dll" "pdn-liquified-v$version\"
    copy "DocumentRectify\bin\Release\net9.0-windows\DocumentRectifyPlugin.dll" "pdn-liquified-v$version\"
-   
+
    # Copy installer scripts
    copy "install-plugins.bat" "pdn-liquified-v$version\"
    copy "install-plugins.ps1" "pdn-liquified-v$version\"
    copy "INSTALL.md" "pdn-liquified-v$version\"
    copy "README.md" "pdn-liquified-v$version\"
-   
+
    # Create ZIP
    Compress-Archive -Path "pdn-liquified-v$version" -DestinationPath "pdn-liquified-v$version.zip"
    ```
@@ -200,6 +200,6 @@ See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ## Version History
 
-| Version | Release Date | Notes |
-| --- | --- | --- |
-| 1.0.0 | TBD | Initial release with 3 distortion effects |
+| Version | Release Date | Notes                                     |
+| ------- | ------------ | ----------------------------------------- |
+| 1.0.0   | TBD          | Initial release with 3 distortion effects |

@@ -125,7 +125,7 @@ If you see all three effects, installation was successful! ✓
 
 ### Paint.NET is crashing after installation
 
-**Solution:** 
+**Solution:**
 1. This is unlikely but can happen if there's a compatibility issue
 2. Uninstall the plugins by deleting the three DLL files from the Effects folders
 3. Restart Paint.NET
