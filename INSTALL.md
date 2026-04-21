@@ -11,11 +11,12 @@ This guide explains how to install the Paint.NET Distortion Plugins (Liquified, 
 
 ### Using the Batch File (Easiest)
 
-1. Download the plugin DLLs and installer files from [Releases](https://github.com/joelst/pdn-liquified/releases/)
-2. Extract to a folder (e.g., `C:\Users\YourName\Downloads\pdn-liquified`)
-3. **Double-click** `install-plugins.bat`
-4. Grant administrator access if prompted
-5. Wait for the completion message
+1. Close Paint.NET
+2. Download the plugin DLLs and installer files from [Releases](https://github.com/joelst/pdn-liquified/releases/)
+3. Extract to a folder (e.g., `C:\Users\YourName\Downloads\pdn-liquified`)
+4. **Double-click** `install-plugins.bat`
+5. Grant administrator access if prompted
+6. Wait for the completion message
 
 ### Using PowerShell Directly
 
@@ -37,7 +38,11 @@ The script will:
 
 If the automated installer doesn't work for any reason:
 
-### Step 1: Locate Paint.NET Installation
+### Step 1: Close Paint.NET
+
+- Close Paint.NET completely (if open)
+
+### Step 2: Locate Paint.NET Installation
 
 Paint.NET is typically installed in one of these locations:
 - `C:\Program Files\paint.net` (64-bit)
@@ -45,32 +50,37 @@ Paint.NET is typically installed in one of these locations:
 
 If Paint.NET is installed elsewhere, note the installation path.
 
-### Step 2: Copy Plugin Files
+### Step 3: Copy Plugin Files
 
-You need to copy the three DLL files to two locations:
+You need to copy the three DLL files to one of these two locations:
 
-#### Location 1: System-wide Effects folder
-```
+#### Location Option 1: System-wide Effects folder
+
+```cmd
 <Paint.NET Installation>\Effects\
 ```
 
 Example:
-```
+
+```cmd
 C:\Program Files\paint.net\Effects\
 ```
 
 Files to copy:
+
 - `LiquifiedPlugin.dll`
 - `GridWarpPlugin.dll`
 - `DocumentRectifyPlugin.dll`
 
-#### Location 2: User Effects folder
-```
+#### Location Option 2: User Effects folder
+
+```cmd
 %USERPROFILE%\Documents\paint.net App Files\Effects\
 ```
 
 Example:
-```
+
+```cmd
 C:\Users\YourName\Documents\paint.net App Files\Effects\
 ```
 
@@ -78,9 +88,8 @@ Copy the same three DLL files here.
 
 **Note:** Create the `Effects` folder if it doesn't exist.
 
-### Step 3: Restart Paint.NET
+### Step 4: Start Paint.NET
 
-- Close Paint.NET completely (if open)
 - Reopen Paint.NET
 
 ## Verification
@@ -95,7 +104,7 @@ After installation, verify that the plugins loaded:
    - **Grid Warp**
    - **Document Rectify**
 
-If you see all three effects, installation was successful! ✓
+If you see all three effects, installation was successful!
 
 ## Troubleshooting
 
@@ -110,6 +119,7 @@ If you see all three effects, installation was successful! ✓
 ### Plugins don't appear in Paint.NET
 
 **Possible causes:**
+
 1. Paint.NET wasn't restarted after installation
    - **Solution:** Close and reopen Paint.NET completely
 2. Files were copied to the wrong location
@@ -120,12 +130,14 @@ If you see all three effects, installation was successful! ✓
 ### Administrator privileges required
 
 **Solution:** The system Effects folder requires admin access. The installer will request elevation automatically. If you see an issue:
+
 - Right-click `install-plugins.bat` → **Run as administrator**
 - Or use PowerShell: Right-click PowerShell → **Run as administrator**, then run `.\install-plugins.ps1`
 
 ### Paint.NET is crashing after installation
 
 **Solution:**
+
 1. This is unlikely but can happen if there's a compatibility issue
 2. Uninstall the plugins by deleting the three DLL files from the Effects folders
 3. Restart Paint.NET
@@ -135,18 +147,26 @@ If you see all three effects, installation was successful! ✓
 
 To remove the plugins:
 
-1. Navigate to both locations mentioned in "Option 2" (Step 2)
+1. Navigate to Paint.NET Effect installation locations:
+
+- `C:\Program Files\paint.net\Effects\`
+- `%USERPROFILE%\Documents\paint.net App Files\Effects\`
+- `C:\Users\YourName\Documents\paint.net App Files\Effects\`
+
 2. Delete the three DLL files:
+
    - `LiquifiedPlugin.dll`
    - `GridWarpPlugin.dll`
    - `DocumentRectifyPlugin.dll`
+
 3. Restart Paint.NET
 
 ## Support
 
 For issues or questions:
-- 📋 Check [GitHub Issues](https://github.com/joelst/pdn-liquified/issues)
-- 📝 Open a new issue with:
+
+- Check [GitHub Issues](https://github.com/joelst/pdn-liquified/issues)
+- Open a new issue with:
   - Windows version
   - Paint.NET version
   - Steps to reproduce the problem
@@ -161,5 +181,3 @@ git clone https://github.com/joelst/pdn-liquified.git
 cd pdn-liquified
 dotnet build -c Release LiquifiedPlugins.slnx
 ```
-
-The Release build automatically installs plugins to your Paint.NET installation.
