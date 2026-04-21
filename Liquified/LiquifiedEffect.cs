@@ -9,13 +9,13 @@ using PaintDotNet.Rendering;
 using System;
 using System.Collections.Generic;
 
-namespace LiquifyPlugin;
+namespace LiquifiedPlugin;
 
 /// <summary>
-/// Liquify brush modes.
-/// Keep in sync with the shader's mode dispatch in <see cref="LiquifySampleMapShader.Execute"/>.
+/// Liquified brush modes.
+/// Keep in sync with the shader's mode dispatch in <see cref="LiquifiedSampleMapShader.Execute"/>.
 /// </summary>
-public enum LiquifyMode
+public enum LiquifiedMode
 {
     ForwardWarp = 0,
     Pucker = 1,
@@ -34,7 +34,7 @@ public enum LiquifyMode
 /// </summary>
 public sealed class BrushStroke
 {
-    public LiquifyMode Mode { get; set; }
+    public LiquifiedMode Mode { get; set; }
     public int BrushSize { get; set; }
     public double Strength { get; set; }
     public double Density { get; set; }
@@ -42,13 +42,13 @@ public sealed class BrushStroke
 }
 
 /// <summary>
-/// GPU-accelerated Liquify effect for Paint.NET 5.x.
+/// GPU-accelerated Liquified effect for Paint.NET 5.x.
 /// Uses <see cref="SampleMapRenderer"/> with RGSS multisampling for high-quality distortion.
 /// Brush strokes are kept in-memory in the effect token and dispatched to the GPU in batches of 16.
 /// The effect performs local image processing only (no network or external I/O).
-/// via <see cref="LiquifySampleMapShader"/>.
+/// via <see cref="LiquifiedSampleMapShader"/>.
 /// </summary>
-internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
+internal sealed partial class LiquifiedEffect : GpuImageEffect<LiquifiedConfigToken>
 {
     // --- Device resources ---
     private Guid sampleMapShaderID;
@@ -73,9 +73,9 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
     //  Construction
     // ─────────────────────────────────────────────
 
-    public LiquifyEffect()
+    public LiquifiedEffect()
         : base(
-            "Liquify5",
+            "Liquified",
             "Tools",
             GpuImageEffectOptions.Create() with
             {
@@ -90,7 +90,7 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
 
     protected override IEffectConfigForm OnCreateConfigForm()
     {
-        return new LiquifyConfigForm();
+        return new LiquifiedConfigForm();
     }
 
     // ─────────────────────────────────────────────
@@ -100,7 +100,7 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
     protected override void OnSetDeviceContext(IDeviceContext deviceContext)
     {
         deviceContext.Factory.RegisterEffectFromBlob(
-            D2D1PixelShaderEffect.GetRegistrationBlob<LiquifySampleMapShader>(out this.sampleMapShaderID));
+            D2D1PixelShaderEffect.GetRegistrationBlob<LiquifiedSampleMapShader>(out this.sampleMapShaderID));
 
         base.OnSetDeviceContext(deviceContext);
     }
@@ -170,8 +170,8 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
     // ─────────────────────────────────────────────
 
     protected override InspectTokenAction OnInspectTokenChanges(
-        LiquifyConfigToken oldToken,
-        LiquifyConfigToken newToken)
+        LiquifiedConfigToken oldToken,
+        LiquifiedConfigToken newToken)
     {
         // Rebuild graph if quality changes (alters RGSS sample count)
         if (oldToken.Quality != newToken.Quality)
@@ -202,7 +202,7 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
         int total = 0;
         foreach (var s in strokes)
         {
-            if (s.Mode == LiquifyMode.Freeze || s.Mode == LiquifyMode.Unfreeze)
+            if (s.Mode == LiquifiedMode.Freeze || s.Mode == LiquifiedMode.Unfreeze)
             {
                 continue;
             }
@@ -240,7 +240,7 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
             int countInBatch = Math.Min(BatchSize, totalPoints - offset);
             if (countInBatch < 0) countInBatch = 0;
 
-            var shader = new LiquifySampleMapShader(
+            var shader = new LiquifiedSampleMapShader(
                 countInBatch,
                 PackPoint(offset + 0),
                 PackPoint(offset + 1),
@@ -334,8 +334,8 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
             float strength = Math.Clamp((float)s.Strength, 0f, 1f);
             float density = Math.Clamp((float)s.Density, 0f, 1f);
             float mode = (float)(int)s.Mode;
-            bool isFreezeMode = s.Mode == LiquifyMode.Freeze;
-            bool isUnfreezeMode = s.Mode == LiquifyMode.Unfreeze;
+            bool isFreezeMode = s.Mode == LiquifiedMode.Freeze;
+            bool isUnfreezeMode = s.Mode == LiquifiedMode.Unfreeze;
 
             foreach (var pt in s.Points)
             {
@@ -417,7 +417,7 @@ internal sealed partial class LiquifyEffect : GpuImageEffect<LiquifyConfigToken>
     [D2DShaderProfile(D2D1ShaderProfile.PixelShader50)]
     [D2DGeneratedPixelShaderDescriptor]
     [AutoConstructor]
-    internal readonly partial struct LiquifySampleMapShader : ID2D1PixelShader
+    internal readonly partial struct LiquifiedSampleMapShader : ID2D1PixelShader
     {
         private readonly int strokeCount;
         private readonly float4 s0;

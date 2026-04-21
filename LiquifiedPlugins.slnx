@@ -5,7 +5,7 @@
   <Folder Name="/GridWarp/">
     <Project Path="GridWarp/GridWarpPlugin.csproj" />
   </Folder>
-  <Folder Name="/Liquify/">
-    <Project Path="Liquify/LiquifyPlugin.csproj" />
+  <Folder Name="/Liquified/">
+    <Project Path="Liquified/LiquifiedPlugin.csproj" />
   </Folder>
 </Solution>

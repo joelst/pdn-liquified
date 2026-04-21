@@ -2,26 +2,26 @@ using PaintDotNet.Effects;
 using System;
 using System.Collections.Generic;
 
-namespace LiquifyPlugin;
+namespace LiquifiedPlugin;
 
 /// <summary>
-/// Strongly-typed config token carrying all Liquify effect parameters and brush strokes.
+/// Strongly-typed config token carrying all Liquified effect parameters and brush strokes.
 /// </summary>
 [Serializable]
-public sealed class LiquifyConfigToken : EffectConfigToken
+public sealed class LiquifiedConfigToken : EffectConfigToken
 {
-    public LiquifyMode Mode { get; set; }
+    public LiquifiedMode Mode { get; set; }
     public int BrushSize { get; set; } = 80;
     public double Strength { get; set; } = 0.5;
     public double Density { get; set; } = 0.5;
     public int Quality { get; set; } = 2;
     public List<BrushStroke> Strokes { get; set; } = new();
 
-    public LiquifyConfigToken()
+    public LiquifiedConfigToken()
     {
     }
 
-    private LiquifyConfigToken(LiquifyConfigToken copyMe)
+    private LiquifiedConfigToken(LiquifiedConfigToken copyMe)
         : base(copyMe)
     {
         Mode = copyMe.Mode;
@@ -50,5 +50,5 @@ public sealed class LiquifyConfigToken : EffectConfigToken
         }
     }
 
-    public override object Clone() => new LiquifyConfigToken(this);
+    public override object Clone() => new LiquifiedConfigToken(this);
 }

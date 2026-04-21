@@ -1,10 +1,10 @@
-# Paint.NET Distortion Plugins (Liquify, Grid Warp, Document Rectify)
+# Paint.NET Distortion Plugins (Liquified, Grid Warp, Document Rectify)
 
-GPU-accelerated distortion effects for Paint.NET 5.x: interactive brush-based liquify, mesh-based grid warp, and document perspective rectification.
+GPU-accelerated distortion effects for Paint.NET 5.x: interactive brush-based liquified, mesh-based grid warp, and document perspective rectification.
 
 ## Features
 
-### Liquify (Effects > Tools > Liquify5)
+### Liquified (Effects > Tools > Liquified)
 
 - **10 brush modes** -- Forward Warp, Pucker, Bloat, Twist CW, Twist CCW, Push Left, Reconstruct, Turbulence, Freeze, Unfreeze
 - **GPU rendering** via ComputeSharp D2D1 sample-map shaders with RGSS multisampling
@@ -33,8 +33,8 @@ GPU-accelerated distortion effects for Paint.NET 5.x: interactive brush-based li
 ## Build
 
 ```powershell
-dotnet build LiquifyPlugins.slnx                 # Debug
-dotnet build -c Release LiquifyPlugins.slnx      # Release (IL trim + ILRepack merge + deploy)
+dotnet build LiquifiedPlugins.slnx                 # Debug
+dotnet build -c Release LiquifiedPlugins.slnx      # Release (IL trim + ILRepack merge + deploy)
 ```
 
 **Prerequisites:** .NET 9.0 SDK, Paint.NET 5.x installed (default `C:\Program Files\paint.net`).
@@ -46,7 +46,7 @@ Release builds automatically:
 3. Copy each plugin DLL to `$(PdnRoot)\Effects\` (may require admin)
 4. Copy each plugin DLL to `%USERPROFILE%\Documents\paint.net App Files\Effects\`
 
-There are no automated tests. Verify by loading Paint.NET and running all three effects (**Effects > Tools > Liquify5**, **Grid Warp**, and **Document Rectify**).
+There are no automated tests. Verify by loading Paint.NET and running all three effects (**Effects > Tools > Liquified**, **Grid Warp**, and **Document Rectify**).
 
 ## CI Build Pipeline
 
@@ -55,16 +55,16 @@ This repository includes a GitHub Actions workflow at `.github/workflows/build.y
 - Triggers on pushes to `main`, pull requests targeting `main`, and manual runs.
 - Installs .NET 9 SDK.
 - Downloads the latest portable Paint.NET release and sets `PdnRoot` for CI builds.
-- Restores and builds `LiquifyPlugins.slnx` in Debug configuration.
+- Restores and builds `LiquifiedPlugins.slnx` in Debug configuration.
 - Publishes plugin DLLs as downloadable workflow artifacts.
 
 ## Architecture
 
 | Project/File                                    | Role                                                                                              |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `Liquify/LiquifyEffect.cs`                      | Main `GpuImageEffect<LiquifyConfigToken>` entry point and liquify shader pipeline.                |
-| `Liquify/LiquifyConfigForm.cs`                  | Interactive brush UI with zoom/pan, freeze mask painting, undo/redo, CPU preview.                 |
-| `Liquify/LiquifyConfigToken.cs`                 | Strongly typed token for liquify settings and stroke list.                                        |
+| `Liquified/LiquifiedEffect.cs`                      | Main `GpuImageEffect<LiquifiedConfigToken>` entry point and liquified shader pipeline.                |
+| `Liquified/LiquifiedConfigForm.cs`                  | Interactive brush UI with zoom/pan, freeze mask painting, undo/redo, CPU preview.                 |
+| `Liquified/LiquifiedConfigToken.cs`                 | Strongly typed token for liquified settings and stroke list.                                        |
 | `GridWarp/GridWarpEffect.cs`                    | Main `GpuImageEffect<GridWarpConfigToken>` with grid displacement shader pipeline.                |
 | `GridWarp/GridWarpConfigForm.cs`                | Interactive grid point editing UI with zoom/pan and undo/redo.                                    |
 | `GridWarp/GridWarpConfigToken.cs`               | Token for grid dimensions, quality, and flattened displacements.                                  |
@@ -91,7 +91,7 @@ This repository includes a GitHub Actions workflow at `.github/workflows/build.y
 ## Conventions
 
 - C# latest, nullable reference types enabled, `unsafe` allowed.
-- One namespace per plugin project: `LiquifyPlugin`, `GridWarpPlugin`, and `DocumentRectifyPlugin`.
+- One namespace per plugin project: `LiquifiedPlugin`, `GridWarpPlugin`, and `DocumentRectifyPlugin`.
 - PascalCase for public members, `_camelCase` for private fields.
 - Paint.NET DLL references use `Private=False` -- never bundled in output.
 - DPI scaling: `AutoScaleMode.None` with manual `_dpi` factor and `S()` helper.

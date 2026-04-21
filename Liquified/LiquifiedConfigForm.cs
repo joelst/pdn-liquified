@@ -9,13 +9,13 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
-namespace LiquifyPlugin;
+namespace LiquifiedPlugin;
 
 /// <summary>
-/// Interactive liquify dialog with brush painting canvas, zoom/pan, and undo/redo.
+/// Interactive liquified dialog with brush painting canvas, zoom/pan, and undo/redo.
 /// Integrates with Paint.NET's effect host via <see cref="EffectConfigForm2"/>.
 /// </summary>
-internal sealed class LiquifyConfigForm : EffectConfigForm2
+internal sealed class LiquifiedConfigForm : EffectConfigForm2
 {
   // ── UI Controls ──────────────────────────────────────────
   private FlowLayoutPanel modeButtonsPanel = null!;
@@ -25,7 +25,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
   private Label brushSizeValue = null!, strengthValue = null!, densityValue = null!, qualityValue = null!;
   private Button undoBtn = null!, redoBtn = null!, resetBtn = null!;
   private Panel canvas = null!;
-  private LiquifyMode selectedMode = LiquifyMode.ForwardWarp;
+  private LiquifiedMode selectedMode = LiquifiedMode.ForwardWarp;
 
   // ── Canvas / interaction state ───────────────────────────
   private float zoom = 1f;
@@ -66,30 +66,30 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
   private readonly struct ModeUiEntry
   {
-    public ModeUiEntry(LiquifyMode mode, string name, string icon)
+    public ModeUiEntry(LiquifiedMode mode, string name, string icon)
     {
       Mode = mode;
       Name = name;
       Icon = icon;
     }
 
-    public LiquifyMode Mode { get; }
+    public LiquifiedMode Mode { get; }
     public string Name { get; }
     public string Icon { get; }
   }
 
   private static readonly ModeUiEntry[] ModeEntries =
   {
-    new(LiquifyMode.ForwardWarp, "Forward Warp", "FW"),
-    new(LiquifyMode.Pucker, "Pucker", "PK"),
-    new(LiquifyMode.Bloat, "Bloat", "BL"),
-    new(LiquifyMode.TwistCW, "Twist CW", "CW"),
-    new(LiquifyMode.TwistCCW, "Twist CCW", "CC"),
-    new(LiquifyMode.PushLeft, "Push Left", "PL"),
-    new(LiquifyMode.Reconstruct, "Reconstruct", "RC"),
-    new(LiquifyMode.Turbulence, "Turbulence", "TB"),
-    new(LiquifyMode.Freeze, "Freeze", "FZ"),
-    new(LiquifyMode.Unfreeze, "Unfreeze", "UF")
+    new(LiquifiedMode.ForwardWarp, "Forward Warp", "FW"),
+    new(LiquifiedMode.Pucker, "Pucker", "PK"),
+    new(LiquifiedMode.Bloat, "Bloat", "BL"),
+    new(LiquifiedMode.TwistCW, "Twist CW", "CW"),
+    new(LiquifiedMode.TwistCCW, "Twist CCW", "CC"),
+    new(LiquifiedMode.PushLeft, "Push Left", "PL"),
+    new(LiquifiedMode.Reconstruct, "Reconstruct", "RC"),
+    new(LiquifiedMode.Turbulence, "Turbulence", "TB"),
+    new(LiquifiedMode.Freeze, "Freeze", "FZ"),
+    new(LiquifiedMode.Unfreeze, "Unfreeze", "UF")
   };
 
   private bool initialFitDone;
@@ -100,7 +100,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
   //  Construction
   // ═════════════════════════════════════════════════════════
 
-  public LiquifyConfigForm()
+  public LiquifiedConfigForm()
   {
     AutoScaleMode = AutoScaleMode.None;
     _dpi = Math.Max(1f, DeviceDpi / 96f);
@@ -114,12 +114,12 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
   protected override EffectConfigToken OnCreateInitialToken()
   {
-    return new LiquifyConfigToken();
+    return new LiquifiedConfigToken();
   }
 
   protected override void OnUpdateDialogFromToken(EffectConfigToken effectToken)
   {
-    var token = (LiquifyConfigToken)effectToken;
+    var token = (LiquifiedConfigToken)effectToken;
 
     strokes.Clear();
     if (token.Strokes != null)
@@ -138,7 +138,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
   protected override void OnUpdateTokenFromDialog(EffectConfigToken dstToken)
   {
-    var token = (LiquifyConfigToken)dstToken;
+    var token = (LiquifiedConfigToken)dstToken;
 
     token.Mode = selectedMode;
     token.BrushSize = brushSizeSlider.Value;
@@ -198,7 +198,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
   {
     SuspendLayout();
 
-    Text = "Liquify5 \u2013 Left-click: paint, Right-click: pan, Wheel: zoom";
+    Text = "Liquified \u2013 Left-click: paint, Right-click: pan, Wheel: zoom";
     ClientSize = new Size(S(1000), S(700));
     MinimumSize = new Size(S(600), S(400));
     FormBorderStyle = FormBorderStyle.Sizable;
@@ -433,8 +433,8 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
     Color cursorColor = selectedMode switch
     {
-      LiquifyMode.Freeze => Color.Orange,
-      LiquifyMode.Unfreeze => Color.Cyan,
+      LiquifiedMode.Freeze => Color.Orange,
+      LiquifiedMode.Unfreeze => Color.Cyan,
       _ => Color.Lime
     };
 
@@ -469,8 +469,8 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
       var ip = ScreenToImage(e.Location);
       if (ip.X >= 0 && ip.Y >= 0 && ip.X < origSurface.Width && ip.Y < origSurface.Height)
       {
-        LiquifyMode mode = selectedMode;
-        bool isFreezeMode = mode == LiquifyMode.Freeze || mode == LiquifyMode.Unfreeze;
+        LiquifiedMode mode = selectedMode;
+        bool isFreezeMode = mode == LiquifiedMode.Freeze || mode == LiquifiedMode.Unfreeze;
         if (!isFreezeMode && IsPointFrozen(ip))
         {
           return;
@@ -491,7 +491,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
         if (isFreezeMode)
         {
-          PaintFreezeMaskAtPoint(ip, currentStroke.BrushSize, mode == LiquifyMode.Freeze);
+          PaintFreezeMaskAtPoint(ip, currentStroke.BrushSize, mode == LiquifiedMode.Freeze);
         }
         else
         {
@@ -518,12 +518,12 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
         float dy = ip.Y - lastBrushPt.Y;
         if (dx * dx + dy * dy >= 4f)
         {
-          bool isFreezeMode = currentStroke.Mode == LiquifyMode.Freeze || currentStroke.Mode == LiquifyMode.Unfreeze;
+          bool isFreezeMode = currentStroke.Mode == LiquifiedMode.Freeze || currentStroke.Mode == LiquifiedMode.Unfreeze;
 
           if (isFreezeMode)
           {
             currentStroke.Points.Add(new[] { ip.X, ip.Y });
-            PaintFreezeMaskAtPoint(ip, currentStroke.BrushSize, currentStroke.Mode == LiquifyMode.Freeze);
+            PaintFreezeMaskAtPoint(ip, currentStroke.BrushSize, currentStroke.Mode == LiquifiedMode.Freeze);
           }
           else if (!IsPointFrozen(ip))
           {
@@ -693,7 +693,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
     RebuildFreezeMaskFromStrokes();
 
     // Flatten all stroke points with precomputed parameters, preserving stroke order.
-    var allPoints = new List<(float cx, float cy, float radius, float strength, float density, LiquifyMode mode)>();
+    var allPoints = new List<(float cx, float cy, float radius, float strength, float density, LiquifiedMode mode)>();
     float globalLeft = float.MaxValue, globalTop = float.MaxValue;
     float globalRight = float.MinValue, globalBottom = float.MinValue;
 
@@ -745,13 +745,13 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
             continue;
           }
 
-          if (sp.mode == LiquifyMode.Freeze)
+          if (sp.mode == LiquifiedMode.Freeze)
           {
             frozen = true;
             continue;
           }
 
-          if (sp.mode == LiquifyMode.Unfreeze)
+          if (sp.mode == LiquifiedMode.Unfreeze)
           {
             frozen = false;
             continue;
@@ -780,19 +780,19 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
           switch (sp.mode)
           {
-            case LiquifyMode.ForwardWarp:
+            case LiquifiedMode.ForwardWarp:
               posX -= dx * invDist * eff * 20f;
               posY -= dy * invDist * eff * 20f;
               break;
-            case LiquifyMode.Pucker:
+            case LiquifiedMode.Pucker:
               posX += dx * invDist * eff * 15f;
               posY += dy * invDist * eff * 15f;
               break;
-            case LiquifyMode.Bloat:
+            case LiquifiedMode.Bloat:
               posX -= dx * invDist * eff * 25f;
               posY -= dy * invDist * eff * 25f;
               break;
-            case LiquifyMode.TwistCW:
+            case LiquifiedMode.TwistCW:
               {
                 float a = eff * 0.5f;
                 float cos = MathF.Cos(a), sin = MathF.Sin(a);
@@ -800,7 +800,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
                 posY = sp.cy + dx * sin + dy * cos;
                 break;
               }
-            case LiquifyMode.TwistCCW:
+            case LiquifiedMode.TwistCCW:
               {
                 float a = -eff * 0.5f;
                 float cos = MathF.Cos(a), sin = MathF.Sin(a);
@@ -808,15 +808,15 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
                 posY = sp.cy + dx * sin + dy * cos;
                 break;
               }
-            case LiquifyMode.PushLeft:
+            case LiquifiedMode.PushLeft:
               posX += dy * invDist * eff * 20f;
               posY -= dx * invDist * eff * 20f;
               break;
-            case LiquifyMode.Reconstruct:
+            case LiquifiedMode.Reconstruct:
               posX += (origX - posX) * eff;
               posY += (origY - posY) * eff;
               break;
-            case LiquifyMode.Turbulence:
+            case LiquifiedMode.Turbulence:
               {
                 float hash1 = MathF.Abs(MathF.Sin(posX * 12.9898f + posY * 78.233f) * 43758.5453f) % 1f;
                 float hash2 = MathF.Abs(MathF.Sin(posX * 39.346f + posY * 11.135f) * 43758.5453f) % 1f;
@@ -824,8 +824,8 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
                 posY += (hash2 - 0.5f) * eff * 15f;
                 break;
               }
-            case LiquifyMode.Freeze:
-            case LiquifyMode.Unfreeze:
+            case LiquifiedMode.Freeze:
+            case LiquifiedMode.Unfreeze:
               break;
           }
         }
@@ -875,7 +875,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
     }
   }
 
-  private static PointF CalcSourcePos(float x, float y, PointF center, LiquifyMode mode,
+  private static PointF CalcSourcePos(float x, float y, PointF center, LiquifiedMode mode,
       float eff, float dist, float dx, float dy)
   {
     float invDist = 1f / dist;
@@ -883,19 +883,19 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
     switch (mode)
     {
-      case LiquifyMode.ForwardWarp:
+      case LiquifiedMode.ForwardWarp:
         sx -= dx * invDist * eff * 20f;
         sy -= dy * invDist * eff * 20f;
         break;
-      case LiquifyMode.Pucker:
+      case LiquifiedMode.Pucker:
         sx += dx * invDist * eff * 15f;
         sy += dy * invDist * eff * 15f;
         break;
-      case LiquifyMode.Bloat:
+      case LiquifiedMode.Bloat:
         sx -= dx * invDist * eff * 25f;
         sy -= dy * invDist * eff * 25f;
         break;
-      case LiquifyMode.TwistCW:
+      case LiquifiedMode.TwistCW:
         {
           float a = eff * 0.5f;
           float cos = MathF.Cos(a), sin = MathF.Sin(a);
@@ -903,7 +903,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
           sy = center.Y + dx * sin + dy * cos;
           break;
         }
-      case LiquifyMode.TwistCCW:
+      case LiquifiedMode.TwistCCW:
         {
           float a = -eff * 0.5f;
           float cos = MathF.Cos(a), sin = MathF.Sin(a);
@@ -911,13 +911,13 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
           sy = center.Y + dx * sin + dy * cos;
           break;
         }
-      case LiquifyMode.PushLeft:
+      case LiquifiedMode.PushLeft:
         sx += dy * invDist * eff * 20f;
         sy -= dx * invDist * eff * 20f;
         break;
-      case LiquifyMode.Reconstruct:
+      case LiquifiedMode.Reconstruct:
         break;
-      case LiquifyMode.Turbulence:
+      case LiquifiedMode.Turbulence:
         {
           float hash1 = MathF.Abs(MathF.Sin(dx * 12.9898f + dy * 78.233f) * 43758.5453f) % 1f;
           float hash2 = MathF.Abs(MathF.Sin(dx * 39.346f + dy * 11.135f) * 43758.5453f) % 1f;
@@ -925,8 +925,8 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
           sy += (hash2 - 0.5f) * eff * 15f;
           break;
         }
-      case LiquifyMode.Freeze:
-      case LiquifyMode.Unfreeze:
+      case LiquifiedMode.Freeze:
+      case LiquifiedMode.Unfreeze:
         break;
     }
 
@@ -1039,10 +1039,10 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
     foreach (var stroke in strokes)
     {
-      if (stroke.Mode != LiquifyMode.Freeze && stroke.Mode != LiquifyMode.Unfreeze)
+      if (stroke.Mode != LiquifiedMode.Freeze && stroke.Mode != LiquifiedMode.Unfreeze)
         continue;
 
-      bool freeze = stroke.Mode == LiquifyMode.Freeze;
+      bool freeze = stroke.Mode == LiquifiedMode.Freeze;
       foreach (var pt in stroke.Points)
       {
         if (pt.Length < 2)
@@ -1105,7 +1105,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
     UpdateTokenFromDialog();
   }
 
-  private void SyncUIFromToken(LiquifyConfigToken token)
+  private void SyncUIFromToken(LiquifiedConfigToken token)
   {
     SetSelectedMode(token.Mode, pushUpdate: false);
     brushSizeSlider.Value = Math.Clamp(token.BrushSize, brushSizeSlider.Minimum, brushSizeSlider.Maximum);
@@ -1218,9 +1218,9 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
   }
 
   /// <summary>
-  /// Procedurally render a glyph icon for a liquify mode. Avoids shipping image assets.
+  /// Procedurally render a glyph icon for a liquified mode. Avoids shipping image assets.
   /// </summary>
-  private static Bitmap CreateModeIcon(LiquifyMode mode, int size, Color color)
+  private static Bitmap CreateModeIcon(LiquifiedMode mode, int size, Color color)
   {
     var bmp = new Bitmap(size, size);
     using var g = Graphics.FromImage(bmp);
@@ -1243,7 +1243,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
     switch (mode)
     {
-      case LiquifyMode.ForwardWarp:
+      case LiquifiedMode.ForwardWarp:
         {
           // Curved arrow sweeping right.
           float y = cy;
@@ -1256,7 +1256,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
           DrawArrowHead(g, brush, hx, hy, 1f, -0.3f, size * 0.18f);
           break;
         }
-      case LiquifyMode.Pucker:
+      case LiquifiedMode.Pucker:
         {
           // 4 arrows pointing inward.
           DrawDirArrow(g, pen, brush, cx, cy, 1, 0, r, size, inward: true);
@@ -1268,7 +1268,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
           g.FillEllipse(brush, cx - d, cy - d, d * 2, d * 2);
           break;
         }
-      case LiquifyMode.Bloat:
+      case LiquifiedMode.Bloat:
         {
           // 4 arrows pointing outward.
           DrawDirArrow(g, pen, brush, cx, cy, 1, 0, r, size, inward: false);
@@ -1279,17 +1279,17 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
           g.FillEllipse(brush, cx - d, cy - d, d * 2, d * 2);
           break;
         }
-      case LiquifyMode.TwistCW:
+      case LiquifiedMode.TwistCW:
         {
           DrawCircularArrow(g, pen, brush, cx, cy, r * 0.85f, clockwise: true, size);
           break;
         }
-      case LiquifyMode.TwistCCW:
+      case LiquifiedMode.TwistCCW:
         {
           DrawCircularArrow(g, pen, brush, cx, cy, r * 0.85f, clockwise: false, size);
           break;
         }
-      case LiquifyMode.PushLeft:
+      case LiquifiedMode.PushLeft:
         {
           // Two parallel right-pointing arrows offset vertically (perpendicular push hint).
           float ah = size * 0.16f;
@@ -1301,7 +1301,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
           DrawArrowHead(g, brush, size - pad - ah, yBot, 1, 0, ah);
           break;
         }
-      case LiquifyMode.Reconstruct:
+      case LiquifiedMode.Reconstruct:
         {
           // Counter-clockwise restore arrow (3/4 circle with arrowhead pointing down-left).
           var rect = new RectangleF(cx - r * 0.7f, cy - r * 0.7f, r * 1.4f, r * 1.4f);
@@ -1313,7 +1313,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
           DrawArrowHead(g, brush, ex, ey, (float)-Math.Sin(endAngle), (float)Math.Cos(endAngle), size * 0.18f);
           break;
         }
-      case LiquifyMode.Turbulence:
+      case LiquifiedMode.Turbulence:
         {
           // Sine wave.
           var pts = new PointF[24];
@@ -1327,13 +1327,13 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
           g.DrawCurve(pen, pts);
           break;
         }
-      case LiquifyMode.Freeze:
+      case LiquifiedMode.Freeze:
         {
           // Snowflake: 3 lines through center + tiny tick marks.
           DrawSnowflake(g, pen, cx, cy, r, strokeW);
           break;
         }
-      case LiquifyMode.Unfreeze:
+      case LiquifiedMode.Unfreeze:
         {
           DrawSnowflake(g, pen, cx, cy, r * 0.85f, strokeW);
           // Diagonal slash to indicate "remove freeze".
@@ -1412,13 +1412,13 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
 
   private void ModeButton_Click(object? sender, EventArgs e)
   {
-    if (sender is not Button button || button.Tag is not LiquifyMode mode)
+    if (sender is not Button button || button.Tag is not LiquifiedMode mode)
       return;
 
     SetSelectedMode(mode, pushUpdate: true);
   }
 
-  private void SetSelectedMode(LiquifyMode mode, bool pushUpdate)
+  private void SetSelectedMode(LiquifiedMode mode, bool pushUpdate)
   {
     selectedMode = mode;
     modeDescLabel.Text = GetModeDescription((int)mode);
@@ -1434,7 +1434,7 @@ internal sealed class LiquifyConfigForm : EffectConfigForm2
     for (int i = 0; i < modeButtons.Count; i++)
     {
       Button button = modeButtons[i];
-      bool isSelected = button.Tag is LiquifyMode mode && mode == selectedMode;
+      bool isSelected = button.Tag is LiquifiedMode mode && mode == selectedMode;
       button.BackColor = isSelected ? SelectedModeButtonBg : ControlBg;
       button.ForeColor = LabelColor;
       button.FlatAppearance.BorderColor = isSelected

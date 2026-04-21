@@ -41,7 +41,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/paintdotnet/release/releases/latest' -Headers @{ 'User-Agent' = 'pdn-liquify5-ci' }
+          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/paintdotnet/release/releases/latest' -Headers @{ 'User-Agent' = 'pdn-liquified-ci' }
           $asset = $release.assets | Where-Object { $_.name -match 'portable\.x64\.zip$' } | Select-Object -First 1
           if (-not $asset) {
             throw 'Could not find a portable x64 Paint.NET asset in latest release.'
@@ -85,19 +85,19 @@ jobs:
       - name: Restore
         shell: pwsh
         run: |
-          dotnet restore LiquifyPlugins.slnx /p:PdnRoot="$env:PDN_ROOT"
+          dotnet restore LiquifiedPlugins.slnx /p:PdnRoot="$env:PDN_ROOT"
 
       - name: Build (Debug)
         shell: pwsh
         run: |
-          dotnet build LiquifyPlugins.slnx -c Debug --no-restore /p:PdnRoot="$env:PDN_ROOT"
+          dotnet build LiquifiedPlugins.slnx -c Debug --no-restore /p:PdnRoot="$env:PDN_ROOT"
 
       - name: Upload plugin DLL artifacts
         uses: actions/upload-artifact@v4
         with:
           name: plugin-dlls-debug
           path: |
-            Liquify/bin/Debug/net9.0-windows/LiquifyPlugin.dll
+            Liquified/bin/Debug/net9.0-windows/LiquifiedPlugin.dll
             GridWarp/bin/Debug/net9.0-windows/GridWarpPlugin.dll
             DocumentRectify/bin/Debug/net9.0-windows/DocumentRectifyPlugin.dll
           if-no-files-found: error

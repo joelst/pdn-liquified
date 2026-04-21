@@ -1,26 +1,26 @@
-# Copilot Instructions — pdn-liquify5
+# Copilot Instructions — pdn-liquified
 
-Paint.NET 5.x plugin providing GPU-accelerated distortion effects via ComputeSharp D2D1: interactive brush-based liquify and mesh-based grid warp.
+Paint.NET 5.x plugin providing GPU-accelerated distortion effects via ComputeSharp D2D1: interactive brush-based liquified and mesh-based grid warp.
 
 ## Build
 
 ```powershell
-dotnet build LiquifyPlugins.slnx                 # Debug
-dotnet build -c Release LiquifyPlugins.slnx      # Release → IL trim + ILRepack merge + auto-deploy
+dotnet build LiquifiedPlugins.slnx                 # Debug
+dotnet build -c Release LiquifiedPlugins.slnx      # Release → IL trim + ILRepack merge + auto-deploy
 ```
 
 **Prerequisites:** .NET 9.0 SDK, Paint.NET 5.x installed (default `C:\Program Files\paint.net`).
 Override the install path with `/p:PdnRoot="<path>"`.
 
-There are no automated tests — verify by loading Paint.NET and running the effects (**Effects > Tools > Liquify5**, **Grid Warp**, and **Document Rectify**).
+There are no automated tests — verify by loading Paint.NET and running the effects (**Effects > Tools > Liquified**, **Grid Warp**, and **Document Rectify**).
 
 ## Architecture
 
 | File | Role |
 | --- | --- |
-| `Liquify/LiquifyEffect.cs` | Main `GpuImageEffect<LiquifyConfigToken>` entry point. Contains `LiquifyMode` enum (10 modes), `BrushStroke` class, `LiquifySampleMapShader`, and packed stroke dispatch. |
-| `Liquify/LiquifyConfigForm.cs` | Interactive `EffectConfigForm2` dialog — zoom/pan canvas, brush painting, freeze mask, undo/redo, CPU preview. |
-| `Liquify/LiquifyConfigToken.cs` | Strongly-typed `EffectConfigToken` — mode, brush settings, quality, and stroke list. |
+| `Liquified/LiquifiedEffect.cs` | Main `GpuImageEffect<LiquifiedConfigToken>` entry point. Contains `LiquifiedMode` enum (10 modes), `BrushStroke` class, `LiquifiedSampleMapShader`, and packed stroke dispatch. |
+| `Liquified/LiquifiedConfigForm.cs` | Interactive `EffectConfigForm2` dialog — zoom/pan canvas, brush painting, freeze mask, undo/redo, CPU preview. |
+| `Liquified/LiquifiedConfigToken.cs` | Strongly-typed `EffectConfigToken` — mode, brush settings, quality, and stroke list. |
 | `GridWarp/GridWarpEffect.cs` | `GpuImageEffect<GridWarpConfigToken>` with `GridWarpSampleMapShader` — bilinear displacement from grid control points. |
 | `GridWarp/GridWarpConfigForm.cs` | Interactive `EffectConfigForm2` dialog — draggable grid points, zoom/pan, grid overlay, CPU preview. |
 | `GridWarp/GridWarpConfigToken.cs` | `EffectConfigToken` — grid dimensions, quality, flattened displacement array. |
@@ -31,9 +31,9 @@ There are no automated tests — verify by loading Paint.NET and running the eff
 
 ## Key patterns
 
-- **Namespace per project:** `LiquifyPlugin`, `GridWarpPlugin`, and `DocumentRectifyPlugin`.
-- **10 liquify brush modes:** ForwardWarp, Pucker, Bloat, TwistCW, TwistCCW, PushLeft, Reconstruct, Turbulence, Freeze, Unfreeze.
-- **GPU rendering:** `SampleMapRenderer` with chained batches of `LiquifySampleMapShader` (16 stroke points per batch). RGSS multisampling for quality levels.
+- **Namespace per project:** `LiquifiedPlugin`, `GridWarpPlugin`, and `DocumentRectifyPlugin`.
+- **10 liquified brush modes:** ForwardWarp, Pucker, Bloat, TwistCW, TwistCCW, PushLeft, Reconstruct, Turbulence, Freeze, Unfreeze.
+- **GPU rendering:** `SampleMapRenderer` with chained batches of `LiquifiedSampleMapShader` (16 stroke points per batch). RGSS multisampling for quality levels.
 - **CPU preview:** Per-pixel displacement accumulation in `RegeneratePreview()`, matching GPU shader constants exactly.
 - **Smoothstep falloff:** `s*s*(3-2*s)` with density modulation. No blend cap — cumulative displacement.
 - **DPI scaling:** `AutoScaleMode.None`; manual `_dpi = DeviceDpi / 96f` with `S(int v)` helper.
