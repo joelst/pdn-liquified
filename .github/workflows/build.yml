@@ -22,10 +22,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 9.0.x
+      - name: Verify .NET 9 SDK is available on runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hasNet9 = dotnet --list-sdks | Select-String '^9\.'
+          if (-not $hasNet9) {
+            throw 'Required .NET 9 SDK was not found on this runner image.'
+          }
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
