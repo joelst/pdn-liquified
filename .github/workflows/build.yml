@@ -91,17 +91,62 @@ jobs:
         run: |
           dotnet restore LiquifiedPlugins.slnx /p:PdnRoot="$env:PDN_ROOT"
 
-      - name: Build (Debug)
+      - name: Build (Release)
         shell: pwsh
         run: |
-          dotnet build LiquifiedPlugins.slnx -c Debug --no-restore /p:PdnRoot="$env:PDN_ROOT"
+          dotnet build LiquifiedPlugins.slnx -c Release --no-restore /p:PdnRoot="$env:PDN_ROOT"
 
-      - name: Upload plugin DLL artifacts
+      - name: Upload plugin DLL artifacts (Release)
         uses: actions/upload-artifact@v4
         with:
-          name: plugin-dlls-debug
+          name: plugin-dlls-release
           path: |
-            Liquified/bin/Debug/net9.0-windows/LiquifiedPlugin.dll
-            GridWarp/bin/Debug/net9.0-windows/GridWarpPlugin.dll
-            DocumentRectify/bin/Debug/net9.0-windows/DocumentRectifyPlugin.dll
+            Liquified/bin/Release/net9.0-windows/LiquifiedPlugin.dll
+            GridWarp/bin/Release/net9.0-windows/GridWarpPlugin.dll
+            DocumentRectify/bin/Release/net9.0-windows/DocumentRectifyPlugin.dll
+          if-no-files-found: error
+
+      - name: Create release package ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path $env:RUNNER_TEMP 'release-package'
+          $zipPath = Join-Path $env:RUNNER_TEMP 'pdn-liquified-release.zip'
+
+          if (Test-Path $dist) {
+            Remove-Item -Path $dist -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $dist | Out-Null
+
+          $filesToCopy = @(
+            'Liquified/bin/Release/net9.0-windows/LiquifiedPlugin.dll',
+            'GridWarp/bin/Release/net9.0-windows/GridWarpPlugin.dll',
+            'DocumentRectify/bin/Release/net9.0-windows/DocumentRectifyPlugin.dll',
+            'install-plugins.bat',
+            'install-plugins.ps1',
+            'INSTALL.md',
+            'README.md',
+            'LICENSE'
+          )
+
+          foreach ($file in $filesToCopy) {
+            if (-not (Test-Path $file)) {
+              throw "Missing file for release package: $file"
+            }
+
+            Copy-Item -Path $file -Destination $dist -Force
+          }
+
+          if (Test-Path $zipPath) {
+            Remove-Item -Path $zipPath -Force
+          }
+
+          Compress-Archive -Path (Join-Path $dist '*') -DestinationPath $zipPath -Force
+
+      - name: Upload release package ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-package-zip
+          path: ${{ runner.temp }}/pdn-liquified-release.zip
           if-no-files-found: error
