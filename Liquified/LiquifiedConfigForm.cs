@@ -52,7 +52,6 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   private BrushStroke? currentStroke;
   private bool[] freezeMask = Array.Empty<bool>();
   private bool[] freezeMaskBaseline = Array.Empty<bool>();
-  private bool[] previewMaskWorkspace = Array.Empty<bool>();
   private int frozenPixelCount;
 
   // ── CPU preview surfaces ─────────────────────────────────
@@ -67,6 +66,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   private float[]? displayedMap;
   private string? previewError;
   private float[]? cachedSampleMap;
+  private bool[]? cachedFreezeMask;
   private bool[]? cachedInitialMask;
   private List<BrushStroke> cachedHistory = new();
   private List<int> cachedPointCounts = new();
@@ -269,7 +269,6 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         Array.Copy(freezeMaskBaseline, freezeMask, pixelCount);
       else
         freezeMaskBaseline = new bool[pixelCount];
-      previewMaskWorkspace = new bool[pixelCount];
       frozenPixelCount = CountFrozenPixels(freezeMask);
       RegeneratePreview();
       initialFitDone = false;
@@ -1014,7 +1013,6 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     }
 
     bool[] maskSnapshot = freezeMaskBaseline;
-    bool[] maskWorkspace = previewMaskWorkspace;
     byte[] selectionSnapshot = selectionCoverage;
     int generation = Interlocked.Increment(ref previewGeneration);
     CancellationTokenSource cancellation = new();
@@ -1034,7 +1032,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         lock (previewSurfaceLock)
         {
           CancellationToken token = cancellation.Token;
-          bool cacheValid = cachedSampleMap != null &&
+          bool cacheValid = cachedSampleMap != null && cachedFreezeMask != null &&
             ReferenceEquals(cachedInitialMask, maskSnapshot) &&
             cachedHistory.Count <= historyIdentities.Count;
           if (cacheValid)
@@ -1074,15 +1072,24 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
             }
           }
           float[] map;
+          bool[] maskWorkspace;
           if (cacheValid && pending.Count == 0)
+          {
             map = cachedSampleMap!;
+            maskWorkspace = cachedFreezeMask!;
+          }
           else
+          {
+            // Map and mask must start at the same cached history boundary.
+            maskWorkspace = new bool[checked(width * height)];
             map = LiquifiedDeformation.BuildSampleMap(
               width, height, cacheValid ? pending : previewStrokes, 0, rate, quality,
-              cacheValid ? maskWorkspace : maskSnapshot, token,
+              cacheValid ? cachedFreezeMask : maskSnapshot, token,
               initialSampleMap: cacheValid ? cachedSampleMap : null,
               maskWorkspace: maskWorkspace);
+          }
           cachedSampleMap = map;
+          cachedFreezeMask = maskWorkspace;
           cachedInitialMask = maskSnapshot;
           cachedHistory = historyIdentities;
           cachedPointCounts = new List<int>(previewStrokes.Count);
@@ -1136,6 +1143,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     catch (Exception ex)
     {
       cachedSampleMap = null;
+      cachedFreezeMask = null;
       cachedHistory.Clear();
       cachedPointCounts.Clear();
       if (!IsDisposed && generation == Volatile.Read(ref previewGeneration))

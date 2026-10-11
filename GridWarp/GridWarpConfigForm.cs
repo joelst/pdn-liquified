@@ -383,7 +383,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             BackColor = Color.FromArgb(48, 48, 48),
             TabStop = true,
             AccessibleName = "Grid warp canvas",
-            AccessibleDescription = "Use Tab to select a control point, then arrow keys to move it. Hold Shift to move ten image pixels. Right-click and drag to pan; use the mouse wheel to zoom."
+            AccessibleDescription = "Use Ctrl+Page Down or Ctrl+Page Up to select a control point, then arrow keys to move it. Hold Shift to move ten image pixels. Tab and Shift+Tab move focus out of the canvas; F6 focuses the X coordinate editor. Right-click and drag to pan; use the mouse wheel to zoom."
         };
         canvas.KeyDown += Canvas_KeyDown;
 
@@ -693,9 +693,9 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             return;
         }
         int pointCount = (currentGridWidth + 1) * (currentGridHeight + 1);
-        if (e.KeyCode == Keys.Tab)
+        if (e.Control && e.KeyCode is Keys.PageDown or Keys.PageUp)
         {
-            int direction = e.Shift ? -1 : 1;
+            int direction = e.KeyCode == Keys.PageUp ? -1 : 1;
             SelectGridPoint((selectedGridPointIndex + direction + pointCount) % pointCount);
             e.Handled = true;
             e.SuppressKeyPress = true;
@@ -722,7 +722,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         float x = col * cellW + displacements[selectedGridPointIndex * 2];
         float y = row * cellH + displacements[selectedGridPointIndex * 2 + 1];
         SyncPointCoordinates(x, y, row, col);
-        canvas.AccessibleDescription = $"Selected control point, row {row + 1}, column {col + 1}, image coordinates {x:0.##}, {y:0.##}. Use arrow keys to move; hold Shift for 10-pixel steps.";
+        canvas.AccessibleDescription = $"Selected control point, row {row + 1}, column {col + 1}, image coordinates {x:0.##}, {y:0.##}. Ctrl+Page Up/Down selects another point. Use arrow keys to move; hold Shift for 10-pixel steps. Tab or Shift+Tab leaves the canvas; F6 focuses the X coordinate editor.";
         canvas.Invalidate();
     }
 
@@ -1424,7 +1424,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         }
 
         protected override bool IsInputKey(Keys keyData) =>
-            (keyData & Keys.KeyCode) is Keys.Tab or Keys.Left or Keys.Right or Keys.Up or Keys.Down
+            (keyData & Keys.KeyCode) is Keys.Left or Keys.Right or Keys.Up or Keys.Down
+            || ((keyData & Keys.Control) != 0 && (keyData & Keys.KeyCode) is Keys.PageUp or Keys.PageDown)
             || base.IsInputKey(keyData);
     }
 }

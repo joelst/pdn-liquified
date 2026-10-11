@@ -63,13 +63,13 @@ Windows Ink hardware; type-loading checks do not exercise GPU rendering or pen i
 - **Interactive canvas** -- drag points with a bounded, cancellable background preview; GPU renders full-resolution output
 - **Grid overlay** -- toggleable grid lines and control point visualization
 - **Undo / Redo / Reset** with keyboard shortcuts
-- **Accessible point editing** -- select points with Tab/Shift+Tab, nudge with arrows (Shift for 10 pixels), or edit X/Y numerically
+- **Accessible point editing** -- select points with Ctrl+Page Up/Down, nudge with arrows (Shift for 10 pixels), or edit X/Y numerically; Tab/Shift+Tab leaves the canvas
 
 ### Document Rectify (Effects > Tools > Document Rectify)
 
 - **Perspective correction** -- map a user-selected quadrilateral to a rectified rectangle
 - **Interactive corners** -- drag TL/TR/BR/BL handles with live preview
-- **Keyboard and numeric corners** -- Tab/Shift+Tab selects a corner, arrows nudge it, and F6 focuses the X coordinate editor
+- **Keyboard and numeric corners** -- Ctrl+Page Up/Down selects a corner, arrows nudge it, and F6 focuses the X coordinate editor; Tab/Shift+Tab leaves the canvas
 - **Aspect options** -- Fill Canvas, Preserve Detected, Source, Square, Letter, Legal, A4, Custom
 - **Auto Detect** -- estimate document corners from content against background
 - **GPU rendering** via sample-map shader with RGSS multisampling

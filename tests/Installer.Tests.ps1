@@ -91,3 +91,6 @@ finally {
         Remove-Item -LiteralPath $testRoot -Recurse -Force
     }
 }
+
+# Negative-path checks deliberately leave a native exit code of 1. The test suite succeeded.
+$global:LASTEXITCODE = 0

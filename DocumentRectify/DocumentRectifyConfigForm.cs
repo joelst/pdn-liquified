@@ -318,7 +318,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
       BackColor = Color.FromArgb(48, 48, 48),
       TabStop = true,
       AccessibleName = "Document rectification canvas",
-      AccessibleDescription = "Use Tab to select a document corner, then arrow keys to move it. Hold Shift to move ten image pixels. Right-click and drag to pan; use the mouse wheel to zoom."
+      AccessibleDescription = "Use Ctrl+Page Down or Ctrl+Page Up to select a document corner, then arrow keys to move it. Hold Shift to move ten image pixels. Tab and Shift+Tab move focus out of the canvas; F6 focuses the X coordinate editor. Right-click and drag to pan; use the mouse wheel to zoom."
     };
     canvas.KeyDown += Canvas_KeyDown;
 
@@ -514,9 +514,9 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
       e.SuppressKeyPress = true;
       return;
     }
-    if (e.KeyCode == Keys.Tab)
+    if (e.Control && e.KeyCode is Keys.PageDown or Keys.PageUp)
     {
-      int direction = e.Shift ? -1 : 1;
+      int direction = e.KeyCode == Keys.PageUp ? -1 : 1;
       SelectCorner((selectedCornerIndex + direction + corners.Length) % corners.Length);
       e.Handled = true;
       e.SuppressKeyPress = true;
@@ -538,7 +538,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     float y = corners[selectedCornerIndex].Y * Math.Max(0, (origSurface?.Height ?? 1) - 1);
     string[] labels = { "top-left", "top-right", "bottom-right", "bottom-left" };
     SyncCornerCoordinates(x, y, labels[selectedCornerIndex]);
-    canvas.AccessibleDescription = $"Selected {labels[selectedCornerIndex]} corner, image coordinates {x:0.##}, {y:0.##}. Use arrow keys to move; hold Shift for 10-pixel steps.";
+    canvas.AccessibleDescription = $"Selected {labels[selectedCornerIndex]} corner, image coordinates {x:0.##}, {y:0.##}. Ctrl+Page Up/Down selects another corner. Use arrow keys to move; hold Shift for 10-pixel steps. Tab or Shift+Tab leaves the canvas; F6 focuses the X coordinate editor.";
     canvas.Invalidate();
   }
 
@@ -1117,7 +1117,8 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     }
 
     protected override bool IsInputKey(Keys keyData) =>
-        (keyData & Keys.KeyCode) is Keys.Tab or Keys.Left or Keys.Right or Keys.Up or Keys.Down
+        (keyData & Keys.KeyCode) is Keys.Left or Keys.Right or Keys.Up or Keys.Down
+        || ((keyData & Keys.Control) != 0 && (keyData & Keys.KeyCode) is Keys.PageUp or Keys.PageDown)
         || base.IsInputKey(keyData);
   }
 }

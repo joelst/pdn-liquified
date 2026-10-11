@@ -43,9 +43,12 @@ jobs:
       - name: Download stable Paint.NET references
         id: paintdotnet
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/paintdotnet/release/releases/latest' -Headers @{ 'User-Agent' = 'pdn-liquified-ci' }
+          $release = gh api repos/paintdotnet/release/releases/latest | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Stable Paint.NET release lookup failed.' }
           $asset = $release.assets | Where-Object { $_.name -match 'portable\.x64\.zip$' } | Select-Object -First 1
           if (-not $asset) {
             throw 'Could not find a portable x64 Paint.NET asset in latest release.'
@@ -111,9 +114,12 @@ jobs:
       - name: Download beta host
         if: matrix.host == 'beta'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/paintdotnet/release/releases?per_page=30' -Headers @{ 'User-Agent' = 'pdn-liquified-ci' }
+          $releases = gh api 'repos/paintdotnet/release/releases?per_page=30' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Beta Paint.NET release lookup failed.' }
           $release = $releases | Where-Object prerelease | Sort-Object published_at -Descending | Select-Object -First 1
           $asset = $release.assets | Where-Object { $_.name -match 'portable\.x64\.zip$' } | Select-Object -First 1
           if (-not $asset) { throw 'No beta portable host available.' }

@@ -12,6 +12,7 @@ Run("mask none all invert", MaskOperations);
 Run("pressure and rate validation", PressureAndRate);
 Run("pixel-center map convention", PixelCenterConvention);
 Run("incremental equals replay", IncrementalEqualsReplay);
+Run("incremental mask inversion and painting", IncrementalMaskInversion);
 Run("malformed and NaN tokens", RejectMalformedTokens);
 Run("one-point stationary application", StationaryApplication);
 Run("huge dimensions rejected before allocation", HugeDimensions);
@@ -27,6 +28,38 @@ static void Run(string name, Action test)
 {
     test();
     Console.WriteLine($"PASS {name}");
+}
+
+static void IncrementalMaskInversion()
+{
+    const int width = 40;
+    const int height = 40;
+    BrushStroke freeze = Stroke(LiquifiedMode.Freeze, 12, 1, new[] { new[] { 20f, 20f } });
+    BrushStroke invert = new() { Action = LiquifiedHistoryAction.MaskInvert };
+    BrushStroke drag = Stroke(LiquifiedMode.ForwardWarp, 20, 1,
+        new[] { new[] { 20f, 20f, 1f, 3f, 0f } });
+    bool[] boundaryMask = new bool[width * height];
+    float[] boundaryMap = LiquifiedDeformation.BuildSampleMap(width, height, new[] { freeze },
+        0, 20, 1, maskWorkspace: boundaryMask);
+    bool[] savedBoundary = (bool[])boundaryMask.Clone();
+    bool[] fullMask = new bool[width * height];
+    float[] full = LiquifiedDeformation.BuildSampleMap(width, height, new[] { freeze, invert, drag },
+        0, 20, 1, maskWorkspace: fullMask);
+    bool[] incrementalMask = new bool[width * height];
+    float[] incremental = LiquifiedDeformation.BuildSampleMap(width, height, new[] { invert, drag },
+        0, 20, 1, boundaryMask, initialSampleMap: boundaryMap, maskWorkspace: incrementalMask);
+    Assert(full.SequenceEqual(incremental) && fullMask.SequenceEqual(incrementalMask),
+        "Coalesced mask inversion and painting diverged from full replay.");
+    Assert(boundaryMask.SequenceEqual(savedBoundary), "Incremental replay mutated its cached boundary mask.");
+    float[] incorrect = LiquifiedDeformation.BuildSampleMap(width, height, new[] { invert, drag },
+        0, 20, 1, fullMask, initialSampleMap: boundaryMap, maskWorkspace: new bool[width * height]);
+    Assert(!full.SequenceEqual(incorrect), "Regression fixture failed to detect using the post-inversion mask.");
+    bool[] finalMask = new bool[width * height];
+    float[] next = LiquifiedDeformation.BuildSampleMap(width, height, new[] { invert, drag },
+        0, 20, 1, incrementalMask, initialSampleMap: incremental, maskWorkspace: finalMask);
+    float[] fullNext = LiquifiedDeformation.BuildSampleMap(width, height, new[] { freeze, invert, drag, invert, drag },
+        0, 20, 1, maskWorkspace: new bool[width * height]);
+    Assert(next.SequenceEqual(fullNext), "A second cached inversion diverged from full replay.");
 }
 
 static void HugeDimensions()

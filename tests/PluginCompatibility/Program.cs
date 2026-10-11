@@ -49,6 +49,35 @@ internal static class Program
                 Type formType = types.Single(type => type.Name.EndsWith("ConfigForm", StringComparison.Ordinal));
                 using Form form = (Form)Activator.CreateInstance(formType, nonPublic: true)!;
                 form.CreateControl();
+                if (name is "GridWarpPlugin" or "DocumentRectifyPlugin")
+                {
+                    formType.GetMethod("OnUpdateDialogFromToken", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(form, new[] { token });
+                    Control canvas = (Control)formType.GetField("canvas", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    MethodInfo isInputKey = canvas.GetType().GetMethod("IsInputKey", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    MethodInfo keyDown = formType.GetMethod("Canvas_KeyDown", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    foreach (Keys keys in new[] { Keys.Tab, Keys.Shift | Keys.Tab })
+                    {
+                        if ((bool)isInputKey.Invoke(canvas, new object[] { keys })!)
+                            throw new InvalidOperationException(name + " consumes focus traversal keys.");
+                        KeyEventArgs tab = new(keys);
+                        keyDown.Invoke(form, new object[] { canvas, tab });
+                        if (tab.Handled || tab.SuppressKeyPress)
+                            throw new InvalidOperationException(name + " traps Tab in its canvas handler.");
+                    }
+                    KeyEventArgs next = new(Keys.Control | Keys.PageDown);
+                    keyDown.Invoke(form, new object[] { canvas, next });
+                    FieldInfo selectedIndex = formType.GetField(
+                        name == "GridWarpPlugin" ? "selectedGridPointIndex" : "selectedCornerIndex",
+                        BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    if ((int)selectedIndex.GetValue(form)! != 1)
+                        throw new InvalidOperationException(name + " did not select the next point.");
+                    KeyEventArgs previous = new(Keys.Control | Keys.PageUp);
+                    keyDown.Invoke(form, new object[] { canvas, previous });
+                    if ((int)selectedIndex.GetValue(form)! != 0 || !next.Handled || !previous.Handled ||
+                        !canvas.AccessibleDescription!.Contains("Tab") || !canvas.AccessibleDescription.Contains("F6"))
+                        throw new InvalidOperationException(name + " is missing accessible point navigation or escape guidance.");
+                }
                 foreach (System.Drawing.Size size in new[] { new System.Drawing.Size(1280, 900), new System.Drawing.Size(900, 700) })
                 {
                     form.ClientSize = size;
