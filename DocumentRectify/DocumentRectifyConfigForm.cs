@@ -24,6 +24,9 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
   private NumericUpDown customAspectH = null!;
   private Label customAspectLabel = null!;
   private Panel canvas = null!;
+  private NumericUpDown cornerX = null!, cornerY = null!;
+  private Label cornerCoordinatesLabel = null!;
+  private bool syncingCornerCoordinates;
 
   private Surface? origSurface;
   private float zoom = 1f;
@@ -41,6 +44,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     };
 
   private int dragCornerIndex = -1;
+  private int selectedCornerIndex;
 
   private const float MinZoom = 0.1f;
   private const float MaxZoom = 8f;
@@ -50,9 +54,10 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
   private static readonly Color PanelBg = Color.FromArgb(45, 45, 48);
   private static readonly Color ControlBg = Color.FromArgb(60, 60, 65);
   private readonly ToolTip uiToolTip = new();
+  private readonly System.Windows.Forms.Timer previewUpdateTimer = new() { Interval = 33 };
 
   private bool initialFitDone;
-  private readonly float _dpi;
+  private float _dpi;
   private int S(int v) => (int)(v * _dpi);
 
   public DocumentRectifyConfigForm()
@@ -61,6 +66,10 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     _dpi = Math.Max(1f, DeviceDpi / 96f);
     BuildUI();
     WireEvents();
+    previewUpdateTimer.Tick += (_, _) => PushUpdate();
+    DpiChanged += (_, e) => RescaleForDpi(e.DeviceDpiOld, e.DeviceDpiNew);
+    SystemColorsChanged += (_, _) => ApplySystemTheme(this);
+    ApplySystemTheme(this);
   }
 
   protected override EffectConfigToken OnCreateInitialToken()
@@ -76,22 +85,25 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
 
     if (token.Corners != null && token.Corners.Length >= 8)
     {
-      corners[0] = new PointF(Math.Clamp(token.Corners[0], 0f, 1f), Math.Clamp(token.Corners[1], 0f, 1f));
-      corners[1] = new PointF(Math.Clamp(token.Corners[2], 0f, 1f), Math.Clamp(token.Corners[3], 0f, 1f));
-      corners[2] = new PointF(Math.Clamp(token.Corners[4], 0f, 1f), Math.Clamp(token.Corners[5], 0f, 1f));
-      corners[3] = new PointF(Math.Clamp(token.Corners[6], 0f, 1f), Math.Clamp(token.Corners[7], 0f, 1f));
+      for (int i = 0; i < corners.Length; i++)
+      {
+        corners[i] = new PointF(NormalizeCoordinate(token.Corners[i * 2], corners[i].X),
+            NormalizeCoordinate(token.Corners[i * 2 + 1], corners[i].Y));
+      }
     }
 
-    aspectCombo.SelectedIndex = (int)token.AspectMode;
+    aspectCombo.SelectedIndex = Math.Clamp((int)token.AspectMode,
+        (int)DocumentRectifyAspectMode.FillCanvas, (int)DocumentRectifyAspectMode.Custom);
 
-    float ratio = token.CustomAspect <= 0f ? 1f : token.CustomAspect;
+    float ratio = float.IsFinite(token.CustomAspect) && token.CustomAspect > 0f ? token.CustomAspect : 1f;
     // Represent ratio as W/H using width=ratio*100, height=100 if input doesn't have separate values.
-    decimal w = (decimal)Math.Clamp(ratio * 100f, (float)customAspectW.Minimum, (float)customAspectW.Maximum);
+    decimal w = (decimal)(Math.Clamp(ratio, 0.01f, 99.99f) * 100f);
     decimal h = 100m;
     customAspectW.Value = w;
     customAspectH.Value = h;
 
     UpdateCustomAspectVisibility();
+    SelectCorner(selectedCornerIndex);
     canvas?.Invalidate();
   }
 
@@ -134,12 +146,15 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
         }
 
         initialFitDone = false;
+        SelectCorner(selectedCornerIndex);
         BeginInvoke(new Action(FitToWindow));
       }
     }
-    catch
+    catch (Exception ex)
     {
-      // Source surface not available; canvas remains blank.
+      origSurface?.Dispose();
+      origSurface = null;
+      canvas.AccessibleDescription = $"Document preview is unavailable because the source image could not be loaded: {ex.Message}";
     }
   }
 
@@ -147,7 +162,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
   {
     SuspendLayout();
 
-    Text = "Document Rectify - Drag corners, Right-click pan, Wheel zoom";
+    Text = "Document Rectify - Drag corners, Tab-select; arrows nudge, Shift+arrows move 10 pixels";
     ClientSize = new Size(S(1000), S(700));
     MinimumSize = new Size(S(600), S(400));
     FormBorderStyle = FormBorderStyle.Sizable;
@@ -180,7 +195,9 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
       SmallChange = 1,
       LargeChange = 1,
       BackColor = PanelBg,
-      Margin = new Padding(0, 0, 0, S(2))
+      Margin = new Padding(0, 0, 0, S(2)),
+      AccessibleName = "Rectification quality",
+      AccessibleDescription = "RGSS sample quality for the final image."
     };
     leftPanel.Controls.Add(qualitySlider);
 
@@ -209,7 +226,9 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
       BackColor = ControlBg,
       ForeColor = LabelColor,
       FlatStyle = FlatStyle.Flat,
-      Margin = new Padding(0, 0, 0, S(6))
+      Margin = new Padding(0, 0, 0, S(6)),
+      AccessibleName = "Output aspect ratio",
+      AccessibleDescription = "Select how the rectified output is fit into the canvas."
     };
     aspectCombo.Items.AddRange(new object[]
     {
@@ -239,16 +258,28 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     };
     customAspectW = MakeNumeric(85m, 1m, 9999m, 0.1m, 1);
     customAspectH = MakeNumeric(110m, 1m, 9999m, 0.1m, 1);
+    customAspectW.AccessibleName = "Custom aspect width";
+    customAspectH.AccessibleName = "Custom aspect height";
     var colon = new Label { Text = ":", AutoSize = true, ForeColor = LabelColor, Margin = new Padding(S(4), S(6), S(4), 0) };
     customRow.Controls.Add(customAspectW);
     customRow.Controls.Add(colon);
     customRow.Controls.Add(customAspectH);
     leftPanel.Controls.Add(customRow);
 
+    cornerCoordinatesLabel = MakeAutoLabel("Selected corner (image pixels):");
+    cornerCoordinatesLabel.MaximumSize = new Size(ctrlW, 0);
+    leftPanel.Controls.Add(cornerCoordinatesLabel);
+    cornerX = AddCoordinateEditor(leftPanel, "&X:", ctrlW, "Selected document corner X");
+    cornerY = AddCoordinateEditor(leftPanel, "&Y:", ctrlW, "Selected document corner Y");
+    cornerX.ValueChanged += (_, _) => ApplyCornerCoordinates(editX: true);
+    cornerY.ValueChanged += (_, _) => ApplyCornerCoordinates(editX: false);
+
     var helpLabel = new Label
     {
       Text = "Drag TL/TR/BR/BL handles to align\nwith the document corners.\n\n" +
-               "Left-click: drag corner\nRight-click: pan view\n" +
+               "Left-click: drag corner\nTab: select corner; arrows: nudge, Shift+arrows: 10 pixels\n" +
+               "Shift+Tab: previous corner\nF6: edit X/Y coordinates\n" +
+               "Right-click: pan view\n" +
                "Mouse wheel: zoom\nDouble-click: fit to window",
       AutoSize = true,
       MaximumSize = new Size(ctrlW, 0),
@@ -284,8 +315,12 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     canvas = new DoubleBufferedPanel
     {
       Dock = DockStyle.Fill,
-      BackColor = Color.FromArgb(48, 48, 48)
+      BackColor = Color.FromArgb(48, 48, 48),
+      TabStop = true,
+      AccessibleName = "Document rectification canvas",
+      AccessibleDescription = "Use Tab to select a document corner, then arrow keys to move it. Hold Shift to move ten image pixels. Right-click and drag to pan; use the mouse wheel to zoom."
     };
+    canvas.KeyDown += Canvas_KeyDown;
 
     Controls.Add(canvas);
     Controls.Add(leftPanel);
@@ -296,7 +331,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
   private void WireEvents()
   {
     uiToolTip.SetToolTip(qualitySlider, "RGSS sample quality for final render");
-    uiToolTip.SetToolTip(canvas, "Left-click drag corners, right-click pan, wheel zoom");
+    uiToolTip.SetToolTip(canvas, "Left-click or Tab-select a corner. Arrow keys move it; Shift+arrows move 10 image pixels. Right-click drag to pan; wheel to zoom.");
     uiToolTip.SetToolTip(autoDetectBtn, "Estimate document corners from image content");
     uiToolTip.SetToolTip(aspectCombo, "Aspect ratio of the rectified output");
 
@@ -317,6 +352,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     {
       if (AutoDetectCorners())
       {
+        SelectCorner(selectedCornerIndex);
         PushUpdate();
         canvas?.Invalidate();
       }
@@ -409,8 +445,16 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
           corners[i].Y * (origSurface.Height - 1)));
     }
 
-    using (var pen = new Pen(Color.FromArgb(220, 0, 220, 255), 2f))
+    bool highContrast = SystemInformation.HighContrast;
+    Color overlayColor = highContrast ? SystemColors.Highlight : Color.FromArgb(220, 0, 220, 255);
+    Color overlayBackground = highContrast ? SystemColors.Window : Color.Black;
+    Color overlayForeground = highContrast ? SystemColors.WindowText : Color.White;
+    using (var haloPen = new Pen(overlayBackground, 5f))
+    using (var contrastPen = new Pen(overlayForeground, 3f))
+    using (var pen = new Pen(overlayColor, 1.5f))
     {
+      g.DrawPolygon(haloPen, pts);
+      g.DrawPolygon(contrastPen, pts);
       g.DrawPolygon(pen, pts);
     }
 
@@ -420,15 +464,27 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     {
       bool dragging = i == dragCornerIndex;
       float r = dragging ? 8f : 6f;
-      var color = dragging ? Color.FromArgb(255, 255, 140, 0) : Color.FromArgb(255, 0, 220, 255);
+      var color = highContrast
+          ? (dragging ? SystemColors.HighlightText : SystemColors.Highlight)
+          : (dragging ? Color.FromArgb(255, 255, 140, 0) : Color.FromArgb(255, 0, 220, 255));
 
       using var b = new SolidBrush(color);
       g.FillEllipse(b, pts[i].X - r, pts[i].Y - r, r * 2f, r * 2f);
 
-      using var outline = new Pen(Color.Black, 1f);
+      using var outline = new Pen(overlayBackground, 1f);
+      using var focusHalo = new Pen(overlayBackground, 4f);
+      using var focusPen = new Pen(overlayForeground, 2f) { DashStyle = DashStyle.Dash };
+      if (i == selectedCornerIndex)
+      {
+        g.DrawEllipse(focusHalo, pts[i].X - r - 5, pts[i].Y - r - 5, r * 2f + 10, r * 2f + 10);
+        g.DrawEllipse(focusPen, pts[i].X - r - 5, pts[i].Y - r - 5, r * 2f + 10, r * 2f + 10);
+      }
       g.DrawEllipse(outline, pts[i].X - r, pts[i].Y - r, r * 2f, r * 2f);
 
-      using var textBrush = new SolidBrush(Color.White);
+      using var textBrush = new SolidBrush(overlayForeground);
+      using var textBackground = new SolidBrush(overlayBackground);
+      SizeF labelSize = g.MeasureString(labels[i], Font);
+      g.FillRectangle(textBackground, pts[i].X + 6f, pts[i].Y + 4f, labelSize.Width, labelSize.Height);
       g.DrawString(labels[i], Font, textBrush, pts[i].X + 6f, pts[i].Y + 4f);
     }
   }
@@ -440,6 +496,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     if (e.Button == MouseButtons.Left)
     {
       dragCornerIndex = HitTestCorner(e.Location);
+      if (dragCornerIndex >= 0) SelectCorner(dragCornerIndex);
     }
     else if (e.Button == MouseButtons.Right)
     {
@@ -447,6 +504,57 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
       lastPanPt = e.Location;
       canvas.Cursor = Cursors.SizeAll;
     }
+  }
+
+  private void Canvas_KeyDown(object? sender, KeyEventArgs e)
+  {
+    if (e.KeyCode == Keys.F6)
+    {
+      cornerX.Focus();
+      e.SuppressKeyPress = true;
+      return;
+    }
+    if (e.KeyCode == Keys.Tab)
+    {
+      int direction = e.Shift ? -1 : 1;
+      SelectCorner((selectedCornerIndex + direction + corners.Length) % corners.Length);
+      e.Handled = true;
+      e.SuppressKeyPress = true;
+      return;
+    }
+
+    if (e.KeyCode is Keys.Left or Keys.Right or Keys.Up or Keys.Down)
+    {
+      NudgeSelectedCorner(e.KeyCode, e.Shift ? 10f : 1f);
+      e.Handled = true;
+      e.SuppressKeyPress = true;
+    }
+  }
+
+  private void SelectCorner(int index)
+  {
+    selectedCornerIndex = Math.Clamp(index, 0, corners.Length - 1);
+    float x = corners[selectedCornerIndex].X * Math.Max(0, (origSurface?.Width ?? 1) - 1);
+    float y = corners[selectedCornerIndex].Y * Math.Max(0, (origSurface?.Height ?? 1) - 1);
+    string[] labels = { "top-left", "top-right", "bottom-right", "bottom-left" };
+    SyncCornerCoordinates(x, y, labels[selectedCornerIndex]);
+    canvas.AccessibleDescription = $"Selected {labels[selectedCornerIndex]} corner, image coordinates {x:0.##}, {y:0.##}. Use arrow keys to move; hold Shift for 10-pixel steps.";
+    canvas.Invalidate();
+  }
+
+  private void NudgeSelectedCorner(Keys key, float amount)
+  {
+    if (origSurface == null) return;
+    PointF corner = corners[selectedCornerIndex];
+    float imageWidth = Math.Max(1, origSurface.Width - 1);
+    float imageHeight = Math.Max(1, origSurface.Height - 1);
+    float dx = key == Keys.Left ? -amount : key == Keys.Right ? amount : 0f;
+    float dy = key == Keys.Up ? -amount : key == Keys.Down ? amount : 0f;
+    corners[selectedCornerIndex] = new PointF(
+        Math.Clamp(corner.X + dx / imageWidth, 0f, 1f),
+        Math.Clamp(corner.Y + dy / imageHeight, 0f, 1f));
+    SelectCorner(selectedCornerIndex);
+    PushUpdate();
   }
 
   private void Canvas_MouseMove(object? sender, MouseEventArgs e)
@@ -461,8 +569,9 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
           Math.Clamp(nx, 0f, 1f),
           Math.Clamp(ny, 0f, 1f));
 
+      SelectCorner(dragCornerIndex);
       canvas.Invalidate();
-      PushUpdate();
+      QueuePreviewUpdate();
     }
     else if (isPanning && e.Button == MouseButtons.Right)
     {
@@ -478,8 +587,10 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
   {
     if (e.Button == MouseButtons.Left)
     {
+      bool wasDragging = dragCornerIndex >= 0;
       dragCornerIndex = -1;
       canvas.Invalidate();
+      if (wasDragging) PushUpdate();
     }
     else if (e.Button == MouseButtons.Right)
     {
@@ -582,11 +693,152 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     corners[1] = new PointF(0.90f, 0.10f);
     corners[2] = new PointF(0.90f, 0.90f);
     corners[3] = new PointF(0.10f, 0.90f);
+    SelectCorner(selectedCornerIndex);
   }
+
+  private static float NormalizeCoordinate(float value, float fallback) =>
+      float.IsFinite(value) ? Math.Clamp(value, 0f, 1f) : fallback;
+
+  private void RescaleForDpi(int oldDpi, int newDpi)
+  {
+    if (oldDpi <= 0 || newDpi <= 0 || oldDpi == newDpi) return;
+    float ratio = (float)newDpi / oldDpi;
+    _dpi = newDpi / 96f;
+    ScaleControlTree(this, ratio);
+    MinimumSize = new Size((int)MathF.Round(MinimumSize.Width * ratio), (int)MathF.Round(MinimumSize.Height * ratio));
+    PerformLayout();
+    canvas?.Invalidate();
+  }
+
+  private static void ScaleControlTree(Control parent, float ratio)
+  {
+    foreach (Control control in parent.Controls)
+    {
+      control.Bounds = new Rectangle(
+          (int)MathF.Round(control.Left * ratio),
+          (int)MathF.Round(control.Top * ratio),
+          Math.Max(1, (int)MathF.Round(control.Width * ratio)),
+          Math.Max(1, (int)MathF.Round(control.Height * ratio)));
+      control.Margin = new Padding(
+          (int)MathF.Round(control.Margin.Left * ratio),
+          (int)MathF.Round(control.Margin.Top * ratio),
+          (int)MathF.Round(control.Margin.Right * ratio),
+          (int)MathF.Round(control.Margin.Bottom * ratio));
+      control.Padding = new Padding(
+          (int)MathF.Round(control.Padding.Left * ratio),
+          (int)MathF.Round(control.Padding.Top * ratio),
+          (int)MathF.Round(control.Padding.Right * ratio),
+          (int)MathF.Round(control.Padding.Bottom * ratio));
+      control.MinimumSize = ScaleSize(control.MinimumSize, ratio);
+      control.MaximumSize = ScaleSize(control.MaximumSize, ratio);
+      ScaleControlTree(control, ratio);
+    }
+  }
+
+  private static Size ScaleSize(Size size, float ratio) =>
+      new(size.Width <= 0 ? 0 : Math.Max(1, (int)MathF.Round(size.Width * ratio)),
+          size.Height <= 0 ? 0 : Math.Max(1, (int)MathF.Round(size.Height * ratio)));
 
   private void PushUpdate()
   {
+    previewUpdateTimer.Stop();
     UpdateTokenFromDialog();
+  }
+
+  private void QueuePreviewUpdate()
+  {
+    if (!previewUpdateTimer.Enabled)
+    {
+      previewUpdateTimer.Start();
+    }
+  }
+
+  private NumericUpDown AddCoordinateEditor(FlowLayoutPanel parent, string label, int width, string name)
+  {
+    var row = new FlowLayoutPanel
+    {
+      Width = width,
+      AutoSize = true,
+      FlowDirection = FlowDirection.LeftToRight,
+      WrapContents = false,
+      Margin = new Padding(0, S(2), 0, S(2))
+    };
+    row.Controls.Add(new Label
+    {
+      Text = label,
+      AutoSize = true,
+      ForeColor = LabelColor,
+      Margin = new Padding(0, S(5), S(6), 0)
+    });
+    var editor = MakeNumeric(0m, 0m, 0m, 1m, 2);
+    editor.Width = width - S(36);
+    editor.Enabled = false;
+    editor.AccessibleName = name;
+    editor.AccessibleDescription = "Absolute image pixel coordinate of the selected document corner, bounded to the source image.";
+    editor.BackColor = SystemInformation.HighContrast ? SystemColors.Window : ControlBg;
+    editor.ForeColor = SystemInformation.HighContrast ? SystemColors.WindowText : LabelColor;
+    row.Controls.Add(editor);
+    parent.Controls.Add(row);
+    uiToolTip.SetToolTip(editor, editor.AccessibleDescription);
+    return editor;
+  }
+
+  private void SyncCornerCoordinates(float x, float y, string label)
+  {
+    if (cornerX == null || cornerY == null) return;
+    syncingCornerCoordinates = true;
+    try
+    {
+      cornerX.Maximum = Math.Max(0, (origSurface?.Width ?? 1) - 1);
+      cornerY.Maximum = Math.Max(0, (origSurface?.Height ?? 1) - 1);
+      cornerX.Value = Math.Clamp((decimal)x, cornerX.Minimum, cornerX.Maximum);
+      cornerY.Value = Math.Clamp((decimal)y, cornerY.Minimum, cornerY.Maximum);
+      cornerX.Enabled = cornerY.Enabled = origSurface != null;
+      cornerCoordinatesLabel.Text = $"Selected {label} corner (pixels):";
+    }
+    finally
+    {
+      syncingCornerCoordinates = false;
+    }
+  }
+
+  private void ApplyCornerCoordinates(bool editX)
+  {
+    if (syncingCornerCoordinates || origSurface == null) return;
+    PointF corner = corners[selectedCornerIndex];
+    corners[selectedCornerIndex] = new PointF(
+        editX ? (float)cornerX.Value / Math.Max(1, origSurface.Width - 1) : corner.X,
+        editX ? corner.Y : (float)cornerY.Value / Math.Max(1, origSurface.Height - 1));
+    SelectCorner(selectedCornerIndex);
+    PushUpdate();
+  }
+
+  private void ApplySystemTheme(Control parent)
+  {
+    bool highContrast = SystemInformation.HighContrast;
+    foreach (Control control in parent.Controls)
+    {
+      control.ForeColor = highContrast ? SystemColors.ControlText : LabelColor;
+      if (control == canvas)
+      {
+        control.BackColor = highContrast ? SystemColors.Window : Color.FromArgb(48, 48, 48);
+      }
+      else if (control is NumericUpDown or ComboBox)
+      {
+        control.BackColor = highContrast ? SystemColors.Window : ControlBg;
+        control.ForeColor = highContrast ? SystemColors.WindowText : LabelColor;
+      }
+      else if (control is Button)
+      {
+        control.BackColor = highContrast ? SystemColors.Control : ControlBg;
+      }
+      else if (control is FlowLayoutPanel or TrackBar)
+      {
+        control.BackColor = highContrast ? SystemColors.Control : PanelBg;
+      }
+      ApplySystemTheme(control);
+    }
+    canvas?.Invalidate();
   }
 
   private Label MakeAutoLabel(string text)
@@ -827,6 +1079,11 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
 
   protected override void OnFormClosing(FormClosingEventArgs e)
   {
+    if (DialogResult == DialogResult.OK)
+    {
+      PushUpdate();
+    }
+
     if (e.CloseReason == CloseReason.UserClosing
         && DialogResult != DialogResult.OK
         && DialogResult != DialogResult.Cancel)
@@ -842,6 +1099,8 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     if (disposing)
     {
       origSurface?.Dispose();
+      uiToolTip.Dispose();
+      previewUpdateTimer.Dispose();
     }
 
     base.OnDispose(disposing);
@@ -854,7 +1113,12 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
       DoubleBuffered = true;
       ResizeRedraw = true;
       SetStyle(ControlStyles.Selectable, true);
+      TabStop = true;
     }
+
+    protected override bool IsInputKey(Keys keyData) =>
+        (keyData & Keys.KeyCode) is Keys.Tab or Keys.Left or Keys.Right or Keys.Up or Keys.Down
+        || base.IsInputKey(keyData);
   }
 }
 

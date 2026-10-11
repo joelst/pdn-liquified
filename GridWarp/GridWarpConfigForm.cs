@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -29,6 +30,9 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     private FlowLayoutPanel gridColorSwatches = null!;
     private Button undoBtn = null!, redoBtn = null!, resetBtn = null!;
     private Panel canvas = null!;
+    private NumericUpDown pointX = null!, pointY = null!;
+    private Label pointCoordinatesLabel = null!;
+    private bool syncingPointCoordinates;
 
     // ── Canvas / interaction state ───────────────────────────
     private float zoom = 1f;
@@ -43,6 +47,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     private int selectedGridColorIndex;
     private float[] displacements = Array.Empty<float>();
     private int dragPointIndex = -1;
+    private int selectedGridPointIndex;
 
     // ── Undo / redo ──────────────────────────────────────────
     private readonly List<float[]> undoStack = new();
@@ -98,8 +103,26 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
     private bool initialFitDone;
     private bool suppressGridSliderEvents;
-    private readonly float _dpi;
+    private float _dpi;
     private int S(int v) => (int)(v * _dpi);
+
+    private readonly object previewSync = new();
+    private PreviewRequest? pendingPreview;
+    private Task? previewWorker;
+    private int previewVersion;
+    private bool previewWorkerRunning;
+    private bool previewDisposed;
+
+    private const int MaxPreviewDimension = 1400;
+
+    private sealed class PreviewRequest
+    {
+        public required Surface Source { get; init; }
+        public required float[] Displacements { get; init; }
+        public required int GridWidth { get; init; }
+        public required int GridHeight { get; init; }
+        public required int Version { get; init; }
+    }
 
     // ═════════════════════════════════════════════════════════
     //  Construction
@@ -111,6 +134,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         _dpi = Math.Max(1f, DeviceDpi / 96f);
         BuildUI();
         WireEvents();
+        DpiChanged += (_, e) => RescaleForDpi(e.DeviceDpiOld, e.DeviceDpiNew);
     }
 
     // ═════════════════════════════════════════════════════════
@@ -132,10 +156,18 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
         int expectedLen = (currentGridWidth + 1) * (currentGridHeight + 1) * 2;
         if (token.Displacements != null && token.Displacements.Length == expectedLen)
+        {
             displacements = (float[])token.Displacements.Clone();
+            for (int i = 0; i < displacements.Length; i++)
+            {
+                if (!float.IsFinite(displacements[i])) displacements[i] = 0f;
+            }
+        }
         else
             InitDisplacements(currentGridWidth, currentGridHeight);
 
+        selectedGridPointIndex = Math.Min(selectedGridPointIndex,
+            (currentGridWidth + 1) * (currentGridHeight + 1) - 1);
         undoStack.Clear();
         redoStack.Clear();
 
@@ -143,7 +175,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         if (gridWidthSlider != null)
             SyncUIFromToken(token);
 
-        RegeneratePreview();
+        SchedulePreview();
     }
 
     protected override void OnUpdateTokenFromDialog(EffectConfigToken dstToken)
@@ -168,24 +200,29 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             var size = srcBmp.Size;
             if (size.Width > 0 && size.Height > 0)
             {
+                DrainPreviewWorker();
                 origSurface?.Dispose();
                 workSurface?.Dispose();
+                workSurface = null;
                 origSurface = new Surface(size.Width, size.Height);
                 unsafe
                 {
                     srcBmp.CopyPixels(origSurface.Scan0.VoidStar, origSurface.Stride,
                         (uint)origSurface.Scan0.Length, null);
                 }
-                workSurface = origSurface.Clone();
-                InitDisplacements(currentGridWidth, currentGridHeight);
-                RegeneratePreview();
+                SelectGridPoint(selectedGridPointIndex);
+                SchedulePreview();
                 initialFitDone = false;
                 BeginInvoke(new Action(FitToWindow));
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Source surface not available — canvas stays blank
+            origSurface?.Dispose();
+            origSurface = null;
+            workSurface?.Dispose();
+            workSurface = null;
+            canvas.AccessibleDescription = $"Grid preview is unavailable because the source image could not be loaded: {ex.Message}";
         }
     }
 
@@ -197,7 +234,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     {
         SuspendLayout();
 
-        Text = "Grid Warp \u2013 Left-click: drag points, Right-click: pan, Wheel: zoom";
+        Text = "Grid Warp \u2013 drag or Tab-select points; arrows nudge, Shift+arrows move 10 pixels";
         ClientSize = new Size(S(1000), S(700));
         MinimumSize = new Size(S(600), S(400));
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -259,7 +296,9 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(255, preset.GridLineColor.R, preset.GridLineColor.G, preset.GridLineColor.B),
                 Margin = new Padding(0, 0, S(6), 0),
-                Tag = index
+                Tag = index,
+                AccessibleName = $"{preset.Name} grid color",
+                AccessibleDescription = $"Use the {preset.Name.ToLowerInvariant()} color for the grid overlay."
             };
             swatch.FlatAppearance.BorderSize = 1;
             swatch.FlatAppearance.BorderColor = Color.FromArgb(30, 30, 30);
@@ -272,10 +311,25 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         leftPanel.Controls.Add(MakeHintLabel("Hover color boxes for names.", ctrlW));
         SelectGridColor(0);
 
+        pointCoordinatesLabel = new Label
+        {
+            Text = "Selected point (image pixels):",
+            AutoSize = true,
+            MaximumSize = new Size(ctrlW, 0),
+            ForeColor = LabelColor
+        };
+        leftPanel.Controls.Add(pointCoordinatesLabel);
+        pointX = AddCoordinateEditor(leftPanel, "&X:", ctrlW, "Selected grid point X");
+        pointY = AddCoordinateEditor(leftPanel, "&Y:", ctrlW, "Selected grid point Y");
+        pointX.ValueChanged += (_, _) => ApplyPointCoordinates(editX: true);
+        pointY.ValueChanged += (_, _) => ApplyPointCoordinates(editX: false);
+
         var helpLabel = new Label
         {
             Text = "Left-click: drag control points\nRight-click: pan view\n" +
                    "Mouse wheel: zoom\nDouble-click: fit to window\n" +
+                   "Tab / Shift+Tab on canvas: next / previous point\n" +
+                   "Arrows: 1 pixel; Shift+arrows: 10 pixels\nF6: edit X/Y coordinates\n" +
                    "Ctrl+Z / Ctrl+Y: undo / redo",
             AutoSize = true,
             MaximumSize = new Size(ctrlW, 0),
@@ -326,8 +380,12 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         canvas = new DoubleBufferedPanel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(48, 48, 48)
+            BackColor = Color.FromArgb(48, 48, 48),
+            TabStop = true,
+            AccessibleName = "Grid warp canvas",
+            AccessibleDescription = "Use Tab to select a control point, then arrow keys to move it. Hold Shift to move ten image pixels. Right-click and drag to pan; use the mouse wheel to zoom."
         };
+        canvas.KeyDown += Canvas_KeyDown;
 
         Controls.Add(canvas);
         Controls.Add(leftPanel);
@@ -344,7 +402,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         uiToolTip.SetToolTip(gridWidthSlider, "Number of horizontal grid cells");
         uiToolTip.SetToolTip(gridHeightSlider, "Number of vertical grid cells");
         uiToolTip.SetToolTip(qualitySlider, "RGSS sample quality for final render");
-        uiToolTip.SetToolTip(canvas, "Left-click drag points, right-click pan, wheel zoom");
+        uiToolTip.SetToolTip(canvas, "Left-click or Tab-select a control point. Arrow keys move it; Shift+arrows move 10 image pixels. Right-click drag to pan; wheel to zoom.");
 
         gridWidthSlider.ValueChanged += (_, _) =>
         {
@@ -439,10 +497,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         }
 
         // Grid overlay
-        if (isGridVisible)
-        {
-            DrawGridOverlay(g);
-        }
+        if (isGridVisible) DrawGridOverlay(g);
+        else DrawSelectedPointFocus(g);
     }
 
     private void DrawGridOverlay(Graphics g)
@@ -458,7 +514,9 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
         GridColorPreset gridColorPreset = GetSelectedGridColorPreset();
 
-        // Draw grid lines
+        // Paired dark/light strokes keep the grid legible against both light and dark images.
+        using var gridHaloPen = new Pen(Color.Black, 3.5f);
+        using var gridContrastPen = new Pen(Color.White, 1.75f);
         using var gridPen = new Pen(gridColorPreset.GridLineColor, 1f);
 
         // Horizontal lines
@@ -468,8 +526,11 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             {
                 var p1 = GetDeformedScreenPos(row, col, ptsX, cellW, cellH);
                 var p2 = GetDeformedScreenPos(row, col + 1, ptsX, cellW, cellH);
+                g.DrawLine(gridHaloPen, p1, p2);
+                g.DrawLine(gridContrastPen, p1, p2);
                 g.DrawLine(gridPen, p1, p2);
             }
+
         }
 
         // Vertical lines
@@ -479,6 +540,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             {
                 var p1 = GetDeformedScreenPos(row, col, ptsX, cellW, cellH);
                 var p2 = GetDeformedScreenPos(row + 1, col, ptsX, cellW, cellH);
+                g.DrawLine(gridHaloPen, p1, p2);
+                g.DrawLine(gridContrastPen, p1, p2);
                 g.DrawLine(gridPen, p1, p2);
             }
         }
@@ -487,7 +550,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         float ptRadius = 4f;
         using var fillBrush = new SolidBrush(gridColorPreset.PointColor);
         using var dragBrush = new SolidBrush(gridColorPreset.DragPointColor);
-        using var outlinePen = new Pen(Color.FromArgb(60, 60, 60), 1.5f);
+        using var outlinePen = new Pen(Color.Black, 2.5f);
+        using var contrastOutlinePen = new Pen(Color.White, 1f);
 
         for (int row = 0; row < ptsY; row++)
         {
@@ -500,8 +564,29 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
                 var brush = isDragging ? dragBrush : fillBrush;
                 g.FillEllipse(brush, sp.X - r, sp.Y - r, r * 2, r * 2);
                 g.DrawEllipse(outlinePen, sp.X - r, sp.Y - r, r * 2, r * 2);
+                g.DrawEllipse(contrastOutlinePen, sp.X - r + 1, sp.Y - r + 1, (r * 2) - 2, (r * 2) - 2);
+                if (idx == selectedGridPointIndex)
+                {
+                    using var focusPen = new Pen(Color.White, 2f) { DashStyle = DashStyle.Dash };
+                    g.DrawEllipse(focusPen, sp.X - r - 4, sp.Y - r - 4, r * 2 + 8, r * 2 + 8);
+                }
             }
         }
+    }
+
+    private void DrawSelectedPointFocus(Graphics g)
+    {
+        if (origSurface == null) return;
+        int pointsPerRow = currentGridWidth + 1;
+        int row = selectedGridPointIndex / pointsPerRow;
+        int col = selectedGridPointIndex % pointsPerRow;
+        PointF point = GetDeformedScreenPos(row, col, pointsPerRow,
+            (float)origSurface.Width / currentGridWidth,
+            (float)origSurface.Height / currentGridHeight);
+        using var halo = new Pen(Color.Black, 4f);
+        using var focus = new Pen(Color.White, 2f) { DashStyle = DashStyle.Dash };
+        g.DrawEllipse(halo, point.X - 10, point.Y - 10, 20, 20);
+        g.DrawEllipse(focus, point.X - 10, point.Y - 10, 20, 20);
     }
 
     private PointF GetDeformedScreenPos(int row, int col, int pointsPerRow, float cellW, float cellH)
@@ -525,6 +610,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             int hitIdx = HitTestControlPoint(e.Location);
             if (hitIdx >= 0)
             {
+                SelectGridPoint(hitIdx);
                 dragPointIndex = hitIdx;
                 // Save undo snapshot before starting drag
                 undoStack.Add((float[])displacements.Clone());
@@ -556,7 +642,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             displacements[dragPointIndex * 2] = imgPt.X - defaultX;
             displacements[dragPointIndex * 2 + 1] = imgPt.Y - defaultY;
 
-            RegeneratePreview();
+            SelectGridPoint(dragPointIndex);
+            SchedulePreview();
         }
         else if (isPanning && e.Button == MouseButtons.Right)
         {
@@ -595,6 +682,68 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             pan.X + (after.X - before.X) * zoom,
             pan.Y + (after.Y - before.Y) * zoom);
         canvas.Invalidate();
+    }
+
+    private void Canvas_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.F6)
+        {
+            pointX.Focus();
+            e.SuppressKeyPress = true;
+            return;
+        }
+        int pointCount = (currentGridWidth + 1) * (currentGridHeight + 1);
+        if (e.KeyCode == Keys.Tab)
+        {
+            int direction = e.Shift ? -1 : 1;
+            SelectGridPoint((selectedGridPointIndex + direction + pointCount) % pointCount);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        if (e.KeyCode is Keys.Left or Keys.Right or Keys.Up or Keys.Down)
+        {
+            NudgeSelectedGridPoint(e.KeyCode, e.Shift ? 10f : 1f);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+    }
+
+    private void SelectGridPoint(int index)
+    {
+        int pointCount = (currentGridWidth + 1) * (currentGridHeight + 1);
+        selectedGridPointIndex = Math.Clamp(index, 0, pointCount - 1);
+        int pointsPerRow = currentGridWidth + 1;
+        int row = selectedGridPointIndex / pointsPerRow;
+        int col = selectedGridPointIndex % pointsPerRow;
+        float cellW = origSurface == null ? 0 : (float)origSurface.Width / currentGridWidth;
+        float cellH = origSurface == null ? 0 : (float)origSurface.Height / currentGridHeight;
+        float x = col * cellW + displacements[selectedGridPointIndex * 2];
+        float y = row * cellH + displacements[selectedGridPointIndex * 2 + 1];
+        SyncPointCoordinates(x, y, row, col);
+        canvas.AccessibleDescription = $"Selected control point, row {row + 1}, column {col + 1}, image coordinates {x:0.##}, {y:0.##}. Use arrow keys to move; hold Shift for 10-pixel steps.";
+        canvas.Invalidate();
+    }
+
+    private void NudgeSelectedGridPoint(Keys key, float amount)
+    {
+        if (origSurface == null) return;
+        undoStack.Add((float[])displacements.Clone());
+        redoStack.Clear();
+        int offset = selectedGridPointIndex * 2;
+        switch (key)
+        {
+            case Keys.Left: displacements[offset] -= amount; break;
+            case Keys.Right: displacements[offset] += amount; break;
+            case Keys.Up: displacements[offset + 1] -= amount; break;
+            case Keys.Down: displacements[offset + 1] += amount; break;
+        }
+
+        SelectGridPoint(selectedGridPointIndex);
+        UpdateButtons();
+        SchedulePreview();
+        PushUpdate();
     }
 
     private int HitTestControlPoint(Point screenPos)
@@ -637,7 +786,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         redoStack.Add((float[])displacements.Clone());
         displacements = undoStack[^1];
         undoStack.RemoveAt(undoStack.Count - 1);
-        RegeneratePreview();
+        SelectGridPoint(selectedGridPointIndex);
+        SchedulePreview();
         UpdateButtons();
         PushUpdate();
     }
@@ -648,7 +798,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         undoStack.Add((float[])displacements.Clone());
         displacements = redoStack[^1];
         redoStack.RemoveAt(redoStack.Count - 1);
-        RegeneratePreview();
+        SelectGridPoint(selectedGridPointIndex);
+        SchedulePreview();
         UpdateButtons();
         PushUpdate();
     }
@@ -658,7 +809,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         undoStack.Add((float[])displacements.Clone());
         redoStack.Clear();
         InitDisplacements(currentGridWidth, currentGridHeight);
-        RegeneratePreview();
+        SelectGridPoint(selectedGridPointIndex);
+        SchedulePreview();
         UpdateButtons();
         PushUpdate();
     }
@@ -667,69 +819,213 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     //  CPU Preview Rendering
     // ═════════════════════════════════════════════════════════
 
-    private void RegeneratePreview()
+    private void SchedulePreview()
     {
-        if (origSurface == null || workSurface == null) return;
+        if (origSurface == null) return;
 
-        int gridWidth = currentGridWidth;
-        int gridHeight = currentGridHeight;
+        lock (previewSync)
+        {
+            if (previewDisposed) return;
+
+            pendingPreview = new PreviewRequest
+            {
+                Source = origSurface,
+                Displacements = (float[])displacements.Clone(),
+                GridWidth = currentGridWidth,
+                GridHeight = currentGridHeight,
+                Version = Interlocked.Increment(ref previewVersion)
+            };
+
+            if (!previewWorkerRunning)
+            {
+                previewWorkerRunning = true;
+                previewWorker = Task.Run(ProcessPreviewQueue);
+            }
+        }
+    }
+
+    private void ProcessPreviewQueue()
+    {
+        while (true)
+        {
+            PreviewRequest? request;
+            lock (previewSync)
+            {
+                if (previewDisposed || pendingPreview == null)
+                {
+                    previewWorkerRunning = false;
+                    return;
+                }
+
+                request = pendingPreview;
+                pendingPreview = null;
+            }
+
+            Surface? preview = null;
+            try
+            {
+                preview = RenderPreview(request);
+            }
+            catch (Exception ex)
+            {
+                preview?.Dispose();
+                preview = null;
+                PostPreviewFailure(request.Version, ex.Message);
+            }
+
+            if (preview == null)
+            {
+                continue;
+            }
+
+            bool isCurrent;
+            lock (previewSync)
+            {
+                isCurrent = !previewDisposed
+                    && request.Version == Volatile.Read(ref previewVersion)
+                    && pendingPreview == null;
+            }
+
+            if (!isCurrent || !IsHandleCreated || IsDisposed)
+            {
+                preview.Dispose();
+                continue;
+            }
+
+            Surface result = preview;
+            try
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    lock (previewSync)
+                    {
+                        if (previewDisposed || result == null || request.Version != Volatile.Read(ref previewVersion))
+                        {
+                            result?.Dispose();
+                            result = null!;
+                            return;
+                        }
+                    }
+
+                    Surface? old = workSurface;
+                    workSurface = result;
+                    result = null!;
+                    old?.Dispose();
+                    canvas.Invalidate();
+                }));
+            }
+            catch (ObjectDisposedException)
+            {
+                result.Dispose();
+            }
+            catch (InvalidOperationException)
+            {
+                result.Dispose();
+            }
+        }
+    }
+
+    private void DrainPreviewWorker()
+    {
+        Task? worker;
+        lock (previewSync)
+        {
+            pendingPreview = null;
+            Interlocked.Increment(ref previewVersion);
+            worker = previewWorker;
+        }
+
+        try
+        {
+            worker?.Wait();
+        }
+        catch (AggregateException)
+        {
+            _ = worker?.Exception;
+        }
+    }
+
+    private Surface RenderPreview(PreviewRequest request)
+    {
+        int gridWidth = request.GridWidth;
+        int gridHeight = request.GridHeight;
         int ptsX = gridWidth + 1;
-        int w = origSurface.Width, h = origSurface.Height;
+        int w = request.Source.Width, h = request.Source.Height;
+        float scale = Math.Min(1f, (float)MaxPreviewDimension / Math.Max(w, h));
+        int previewWidth = Math.Max(1, (int)MathF.Round(w * scale));
+        int previewHeight = Math.Max(1, (int)MathF.Round(h * scale));
         float cellW = (float)w / gridWidth;
         float cellH = (float)h / gridHeight;
-
-        // Fast path: if all displacements are zero, just copy the original
-        bool allZero = true;
-        for (int i = 0; i < displacements.Length && allZero; i++)
+        Surface work = new(previewWidth, previewHeight);
+        try
         {
-            if (displacements[i] != 0) allZero = false;
-        }
-
-        if (allZero)
-        {
-            CopySurface(origSurface, workSurface);
-            canvas?.Invalidate();
-            return;
-        }
-
-        // Local copy for thread safety in Parallel.For
-        float[] disp = displacements;
-        var orig = origSurface;
-        var work = workSurface;
-
-        Parallel.For(0, h, py =>
-        {
-            float gy = py / cellH;
-            int cj = Math.Clamp((int)MathF.Floor(gy), 0, gridHeight - 1);
-            float v = Math.Clamp(gy - cj, 0f, 1f);
-
-            for (int px = 0; px < w; px++)
+            var options = new ParallelOptions
             {
-                float gx = px / cellW;
-                int ci = Math.Clamp((int)MathF.Floor(gx), 0, gridWidth - 1);
-                float u = Math.Clamp(gx - ci, 0f, 1f);
+                MaxDegreeOfParallelism = Math.Max(1, System.Environment.ProcessorCount - 1)
+            };
 
-                int i00 = cj * ptsX + ci;
-                int i10 = i00 + 1;
-                int i01 = i00 + ptsX;
-                int i11 = i01 + 1;
+            Parallel.For(0, previewHeight, options, py =>
+            {
+                if (request.Version != Volatile.Read(ref previewVersion)) return;
+                float imageY = (py + 0.5f) * h / previewHeight - 0.5f;
+                float gy = imageY / cellH;
+                int cj = Math.Clamp((int)MathF.Floor(gy), 0, gridHeight - 1);
+                float v = Math.Clamp(gy - cj, 0f, 1f);
 
-                float dx00 = disp[i00 * 2], dy00 = disp[i00 * 2 + 1];
-                float dx10 = disp[i10 * 2], dy10 = disp[i10 * 2 + 1];
-                float dx01 = disp[i01 * 2], dy01 = disp[i01 * 2 + 1];
-                float dx11 = disp[i11 * 2], dy11 = disp[i11 * 2 + 1];
+                for (int px = 0; px < previewWidth; px++)
+                {
+                    if ((px & 127) == 0 && request.Version != Volatile.Read(ref previewVersion)) return;
+                    float imageX = (px + 0.5f) * w / previewWidth - 0.5f;
+                    float gx = imageX / cellW;
+                    int ci = Math.Clamp((int)MathF.Floor(gx), 0, gridWidth - 1);
+                    float u = Math.Clamp(gx - ci, 0f, 1f);
 
-                float tdx = Lerp(Lerp(dx00, dx10, u), Lerp(dx01, dx11, u), v);
-                float tdy = Lerp(Lerp(dy00, dy10, u), Lerp(dy01, dy11, u), v);
+                    int i00 = cj * ptsX + ci;
+                    int i10 = i00 + 1;
+                    int i01 = i00 + ptsX;
+                    int i11 = i01 + 1;
+                    float[] disp = request.Displacements;
+                    float dx00 = disp[i00 * 2], dy00 = disp[i00 * 2 + 1];
+                    float dx10 = disp[i10 * 2], dy10 = disp[i10 * 2 + 1];
+                    float dx01 = disp[i01 * 2], dy01 = disp[i01 * 2 + 1];
+                    float dx11 = disp[i11 * 2], dy11 = disp[i11 * 2 + 1];
+                    float tdx = Lerp(Lerp(dx00, dx10, u), Lerp(dx01, dx11, u), v);
+                    float tdy = Lerp(Lerp(dy00, dy10, u), Lerp(dy01, dy11, u), v);
 
-                float srcX = px - tdx;
-                float srcY = py - tdy;
+                    work[px, py] = SampleBilinear(request.Source, imageX - tdx, imageY - tdy);
+                }
+            });
 
-                work[px, py] = SampleBilinear(orig, srcX, srcY);
+            if (request.Version != Volatile.Read(ref previewVersion))
+            {
+                work.Dispose();
+                return null!;
             }
-        });
 
-        canvas?.Invalidate();
+            return work;
+        }
+        catch
+        {
+            work.Dispose();
+            throw;
+        }
+    }
+
+    private void PostPreviewFailure(int version, string message)
+    {
+        if (!IsHandleCreated || IsDisposed) return;
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                if (version == Volatile.Read(ref previewVersion))
+                {
+                    canvas.AccessibleDescription = $"Grid preview could not be refreshed: {message}";
+                }
+            }));
+        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
     }
 
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;
@@ -746,13 +1042,6 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             ColorBgra.Lerp(sfc[x1, y1], sfc[x2, y1], fx),
             ColorBgra.Lerp(sfc[x1, y2], sfc[x2, y2], fx),
             fy);
-    }
-
-    private static void CopySurface(Surface src, Surface dst)
-    {
-        for (int y = 0; y < src.Height && y < dst.Height; y++)
-            for (int x = 0; x < src.Width && x < dst.Width; x++)
-                dst[x, y] = src[x, y];
     }
 
     // ═════════════════════════════════════════════════════════
@@ -830,10 +1119,12 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         gridHeightValue.Text = currentGridHeight.ToString();
 
         InitDisplacements(currentGridWidth, currentGridHeight);
+        SelectGridPoint(Math.Min(selectedGridPointIndex,
+            (currentGridWidth + 1) * (currentGridHeight + 1) - 1));
         undoStack.Clear();
         redoStack.Clear();
         UpdateButtons();
-        RegeneratePreview();
+        SchedulePreview();
         PushUpdate();
     }
 
@@ -860,6 +1151,46 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         canvas?.Invalidate();
     }
 
+    private void RescaleForDpi(int oldDpi, int newDpi)
+    {
+        if (oldDpi <= 0 || newDpi <= 0 || oldDpi == newDpi) return;
+        float ratio = (float)newDpi / oldDpi;
+        _dpi = newDpi / 96f;
+        ScaleControlTree(this, ratio);
+        MinimumSize = new Size((int)MathF.Round(MinimumSize.Width * ratio), (int)MathF.Round(MinimumSize.Height * ratio));
+        PerformLayout();
+        canvas?.Invalidate();
+    }
+
+    private static void ScaleControlTree(Control parent, float ratio)
+    {
+        foreach (Control control in parent.Controls)
+        {
+            control.Bounds = new Rectangle(
+                (int)MathF.Round(control.Left * ratio),
+                (int)MathF.Round(control.Top * ratio),
+                Math.Max(1, (int)MathF.Round(control.Width * ratio)),
+                Math.Max(1, (int)MathF.Round(control.Height * ratio)));
+            control.Margin = new Padding(
+                (int)MathF.Round(control.Margin.Left * ratio),
+                (int)MathF.Round(control.Margin.Top * ratio),
+                (int)MathF.Round(control.Margin.Right * ratio),
+                (int)MathF.Round(control.Margin.Bottom * ratio));
+            control.Padding = new Padding(
+                (int)MathF.Round(control.Padding.Left * ratio),
+                (int)MathF.Round(control.Padding.Top * ratio),
+                (int)MathF.Round(control.Padding.Right * ratio),
+                (int)MathF.Round(control.Padding.Bottom * ratio));
+            control.MinimumSize = ScaleSize(control.MinimumSize, ratio);
+            control.MaximumSize = ScaleSize(control.MaximumSize, ratio);
+            ScaleControlTree(control, ratio);
+        }
+    }
+
+    private static Size ScaleSize(Size size, float ratio) =>
+        new(size.Width <= 0 ? 0 : Math.Max(1, (int)MathF.Round(size.Width * ratio)),
+            size.Height <= 0 ? 0 : Math.Max(1, (int)MathF.Round(size.Height * ratio)));
+
     private void SyncUIFromToken(GridWarpConfigToken token)
     {
         suppressGridSliderEvents = true;
@@ -870,6 +1201,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         gridWidthValue.Text = currentGridWidth.ToString();
         gridHeightValue.Text = currentGridHeight.ToString();
         qualityValue.Text = $"{qualitySlider.Value}x";
+        SelectGridPoint(selectedGridPointIndex);
         UpdateButtons();
     }
 
@@ -882,6 +1214,79 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     // ═════════════════════════════════════════════════════════
     //  Helpers
     // ═════════════════════════════════════════════════════════
+
+    private NumericUpDown AddCoordinateEditor(FlowLayoutPanel parent, string label, int width, string name)
+    {
+        var row = new FlowLayoutPanel
+        {
+            Width = width,
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = new Padding(0, S(2), 0, S(2))
+        };
+        row.Controls.Add(new Label
+        {
+            Text = label,
+            AutoSize = true,
+            ForeColor = LabelColor,
+            Margin = new Padding(0, S(5), S(6), 0)
+        });
+        var editor = new NumericUpDown
+        {
+            Minimum = -1000000000m,
+            Maximum = 1000000000m,
+            DecimalPlaces = 2,
+            Increment = 1m,
+            Width = width - S(36),
+            Enabled = false,
+            AccessibleName = name,
+            AccessibleDescription = "Absolute image pixel coordinate of the selected control point; negative coordinates are allowed.",
+            BackColor = SystemInformation.HighContrast ? SystemColors.Window : ControlBg,
+            ForeColor = SystemInformation.HighContrast ? SystemColors.WindowText : LabelColor
+        };
+        row.Controls.Add(editor);
+        parent.Controls.Add(row);
+        uiToolTip.SetToolTip(editor, editor.AccessibleDescription);
+        return editor;
+    }
+
+    private void SyncPointCoordinates(float x, float y, int row, int col)
+    {
+        if (pointX == null || pointY == null) return;
+        syncingPointCoordinates = true;
+        try
+        {
+            pointX.Value = (decimal)Math.Clamp(x, (float)pointX.Minimum, (float)pointX.Maximum);
+            pointY.Value = (decimal)Math.Clamp(y, (float)pointY.Minimum, (float)pointY.Maximum);
+            pointX.Enabled = pointY.Enabled = origSurface != null;
+            pointCoordinatesLabel.Text = $"Point row {row + 1}, column {col + 1} (pixels):";
+        }
+        finally
+        {
+            syncingPointCoordinates = false;
+        }
+    }
+
+    private void ApplyPointCoordinates(bool editX)
+    {
+        if (syncingPointCoordinates || origSurface == null) return;
+        int pointsPerRow = currentGridWidth + 1;
+        int row = selectedGridPointIndex / pointsPerRow;
+        int col = selectedGridPointIndex % pointsPerRow;
+        int offset = selectedGridPointIndex * 2;
+        float dx = editX ? (float)pointX.Value - col * ((float)origSurface.Width / currentGridWidth) : displacements[offset];
+        float dy = editX ? displacements[offset + 1] : (float)pointY.Value - row * ((float)origSurface.Height / currentGridHeight);
+        if (dx == displacements[offset] && dy == displacements[offset + 1]) return;
+        undoStack.Add((float[])displacements.Clone());
+        redoStack.Clear();
+        displacements[offset] = dx;
+        displacements[offset + 1] = dy;
+        SelectGridPoint(selectedGridPointIndex);
+        UpdateButtons();
+        SchedulePreview();
+        PushUpdate();
+    }
 
     private Button MakeButton(string text)
     {
@@ -904,6 +1309,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         Button btn = MakeButton(icon);
         btn.MinimumSize = new Size(S(34), S(30));
         btn.Padding = new Padding(S(6), S(2), S(6), S(2));
+        btn.AccessibleName = tooltip;
+        btn.AccessibleDescription = tooltip;
         uiToolTip.SetToolTip(btn, tooltip);
         return btn;
     }
@@ -950,7 +1357,9 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             SmallChange = 1,
             LargeChange = Math.Max(1, (max - min) / 4),
             BackColor = PanelBg,
-            Margin = new Padding(0, 0, 0, S(2))
+            Margin = new Padding(0, 0, 0, S(2)),
+            AccessibleName = label.TrimEnd(':'),
+            AccessibleDescription = $"{label.TrimEnd(':')}. Use the arrow keys to change the value."
         };
         parent.Controls.Add(tb);
 
@@ -986,8 +1395,16 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     {
         if (disposing)
         {
+            lock (previewSync)
+            {
+                previewDisposed = true;
+            }
+            DrainPreviewWorker();
+
             origSurface?.Dispose();
             workSurface?.Dispose();
+            uiToolTip.Dispose();
+            gridColorToolTip.Dispose();
         }
         base.OnDispose(disposing);
     }
@@ -1003,7 +1420,12 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             DoubleBuffered = true;
             ResizeRedraw = true;
             SetStyle(ControlStyles.Selectable, true);
+            TabStop = true;
         }
+
+        protected override bool IsInputKey(Keys keyData) =>
+            (keyData & Keys.KeyCode) is Keys.Tab or Keys.Left or Keys.Right or Keys.Up or Keys.Down
+            || base.IsInputKey(keyData);
     }
 }
 

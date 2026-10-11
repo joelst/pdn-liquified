@@ -56,7 +56,7 @@ internal sealed partial class GridWarpEffect : GpuImageEffect<GridWarpConfigToke
 
     protected override IDeviceImage OnCreateOutput(IDeviceContext deviceContext)
     {
-        int quality = this.Token.Quality;
+        int quality = Math.Clamp(this.Token.Quality, 1, 7);
         int sampleCount = quality * quality;
 
         this.scenePositionEffects = new ScenePositionEffect[sampleCount];
@@ -97,7 +97,7 @@ internal sealed partial class GridWarpEffect : GpuImageEffect<GridWarpConfigToke
         GridWarpConfigToken oldToken,
         GridWarpConfigToken newToken)
     {
-        if (oldToken.Quality != newToken.Quality)
+        if (Math.Clamp(oldToken.Quality, 1, 7) != Math.Clamp(newToken.Quality, 1, 7))
             return InspectTokenAction.RecreateOutput;
 
         return InspectTokenAction.UpdateOutput;
@@ -109,10 +109,10 @@ internal sealed partial class GridWarpEffect : GpuImageEffect<GridWarpConfigToke
 
     protected override void OnUpdateOutput(IDeviceContext deviceContext)
     {
-        int quality = this.Token.Quality;
+        int quality = Math.Clamp(this.Token.Quality, 1, 7);
         int sampleCount = quality * quality;
-        int gridWidth = this.Token.GridWidth;
-        int gridHeight = this.Token.GridHeight;
+        int gridWidth = Math.Clamp(this.Token.GridWidth, 2, 50);
+        int gridHeight = Math.Clamp(this.Token.GridHeight, 2, 50);
         float imgW = (float)this.Environment.Document.Size.Width;
         float imgH = (float)this.Environment.Document.Size.Height;
         float[] displacements = this.Token.Displacements ?? Array.Empty<float>();
@@ -135,8 +135,8 @@ internal sealed partial class GridWarpEffect : GpuImageEffect<GridWarpConfigToke
         {
             int src = pointIndex * 2;
             int dst = pointIndex * 4;
-            dispPixels[dst + 0] = src < displacements.Length ? displacements[src] : 0f;
-            dispPixels[dst + 1] = src + 1 < displacements.Length ? displacements[src + 1] : 0f;
+            dispPixels[dst + 0] = src < displacements.Length && float.IsFinite(displacements[src]) ? displacements[src] : 0f;
+            dispPixels[dst + 1] = src + 1 < displacements.Length && float.IsFinite(displacements[src + 1]) ? displacements[src + 1] : 0f;
             dispPixels[dst + 2] = 0f;
             dispPixels[dst + 3] = 0f;
         }

@@ -15,6 +15,10 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [stable, beta]
     env:
       DOTNET_NOLOGO: true
       NUGET_XMLDOC_MODE: skip
@@ -22,14 +26,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify .NET 9 SDK is available on runner
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $hasNet9 = dotnet --list-sdks | Select-String '^9\.'
-          if (-not $hasNet9) {
-            throw 'Required .NET 9 SDK was not found on this runner image.'
-          }
+      - name: Install .NET 9 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
@@ -40,7 +40,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      - name: Download Paint.NET portable
+      - name: Download stable Paint.NET references
         id: paintdotnet
         shell: pwsh
         run: |
@@ -55,9 +55,6 @@ jobs:
           $extractPath = Join-Path $env:RUNNER_TEMP 'paintdotnet'
 
           Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath
-          if (Test-Path $extractPath) {
-            Remove-Item -Path $extractPath -Recurse -Force
-          }
           Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
 
           $requiredDlls = @(
@@ -79,27 +76,62 @@ jobs:
           foreach ($dll in $requiredDlls) {
             $path = Join-Path $extractPath $dll
             if (-not (Test-Path $path)) {
-              throw "Missing required Paint.NET assembly: $dll"
+              throw "Missing required Paint.NET assembly: $($dll)"
             }
           }
 
-          "PDN_ROOT=$extractPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "pdn_root=$extractPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "PDN_ROOT=$($extractPath)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PDN_HOST=$($extractPath)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Restore
         shell: pwsh
         run: |
           dotnet restore LiquifiedPlugins.slnx /p:PdnRoot="$env:PDN_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
 
       - name: Build (Release)
         shell: pwsh
         run: |
-          dotnet build LiquifiedPlugins.slnx -c Release --no-restore /p:PdnRoot="$env:PDN_ROOT"
+          dotnet build LiquifiedPlugins.slnx -c Release --no-restore /p:PdnRoot="$env:PDN_ROOT" /p:DeployPlugins=false
+          if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+
+      - name: Regression and installer checks
+        shell: pwsh
+        run: |
+          dotnet run --project tests\Liquified.RegressionTests -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'Deformation regressions failed.' }
+          .\tests\Installer.Tests.ps1
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          }
+          $issues = Invoke-ScriptAnalyzer -Path install-plugins.ps1
+          $issues += Invoke-ScriptAnalyzer -Path tests -Recurse
+          if ($issues) { $issues | Format-Table; throw 'PowerShell analyzer findings.' }
+
+      - name: Download beta host
+        if: matrix.host == 'beta'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/paintdotnet/release/releases?per_page=30' -Headers @{ 'User-Agent' = 'pdn-liquified-ci' }
+          $release = $releases | Where-Object prerelease | Sort-Object published_at -Descending | Select-Object -First 1
+          $asset = $release.assets | Where-Object { $_.name -match 'portable\.x64\.zip$' } | Select-Object -First 1
+          if (-not $asset) { throw 'No beta portable host available.' }
+          $zip = Join-Path $env:RUNNER_TEMP $asset.name
+          $directory = Join-Path $env:RUNNER_TEMP 'paintdotnet-beta'
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
+          Expand-Archive -LiteralPath $zip -DestinationPath $directory
+          "PDN_HOST=$($directory)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Load plugins in portable host runtime
+        shell: pwsh
+        run: |
+          .\tests\Test-PluginCompatibility.ps1 -PortableDirectory $env:PDN_HOST
 
       - name: Upload plugin DLL artifacts (Release)
         uses: actions/upload-artifact@v4
         with:
-          name: plugin-dlls-release
+          name: plugin-dlls-release-${{ matrix.host }}
           path: |
             Liquified/bin/Release/net9.0-windows/LiquifiedPlugin.dll
             GridWarp/bin/Release/net9.0-windows/GridWarpPlugin.dll
@@ -111,10 +143,6 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $dist = Join-Path $env:RUNNER_TEMP 'release-package'
-
-          if (Test-Path $dist) {
-            Remove-Item -Path $dist -Recurse -Force
-          }
 
           New-Item -ItemType Directory -Path $dist | Out-Null
 
@@ -131,17 +159,17 @@ jobs:
 
           foreach ($file in $filesToCopy) {
             if (-not (Test-Path $file)) {
-              throw "Missing file for release package: $file"
+              throw "Missing file for release package: $($file)"
             }
 
             Copy-Item -Path $file -Destination $dist -Force
           }
 
-          "RELEASE_PACKAGE_DIR=$dist" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_PACKAGE_DIR=$($dist)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: pdn-liquified-release
+          name: pdn-liquified-release-${{ matrix.host }}
           path: ${{ env.RELEASE_PACKAGE_DIR }}/
           if-no-files-found: error

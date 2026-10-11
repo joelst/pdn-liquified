@@ -1,0 +1,124 @@
+name: Signed release
+
+on:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful main-branch Build run ID to sign
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    if: >-
+      github.repository == 'joelst/pdn-liquified' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Validate trusted build provenance
+        id: build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REQUESTED_RUN: ${{ inputs.build_run_id || github.event.workflow_run.id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:REQUESTED_RUN -notmatch '^[0-9]+$') { throw 'A numeric build run ID is required.' }
+          $run = gh api "repos/$($env:REPOSITORY)/actions/runs/$($env:REQUESTED_RUN)" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Build run lookup failed.' }
+          $workflow = gh api "repos/$($env:REPOSITORY)/actions/workflows/$($run.workflow_id)" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Build workflow lookup failed.' }
+          if ($run.conclusion -ne 'success' -or $run.status -ne 'completed' -or
+              $run.head_branch -ne 'main' -or $run.head_repository.full_name -ne $env:REPOSITORY -or
+              $workflow.path -ne '.github/workflows/build.yml' -or
+              $run.event -notin @('push', 'workflow_dispatch') -or
+              $run.head_sha -notmatch '^[a-f0-9]{40}$') {
+            throw 'Only successful trusted main-branch Build runs may be signed.'
+          }
+          "run_id=$($run.id)" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "sha=$($run.head_sha)" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Checkout trusted signing scripts
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Download validated build package
+        uses: actions/download-artifact@v4
+        with:
+          name: pdn-liquified-release-stable
+          run-id: ${{ steps.build.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: signed-package
+
+      - name: Azure OIDC login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install signing module
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Module -ListAvailable ArtifactSigning | Where-Object Version -eq '0.1.8')) {
+            Install-Module ArtifactSigning -RequiredVersion 0.1.8 -Scope CurrentUser -Force -Repository PSGallery
+          }
+
+      - name: Test signing failure handling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Module -ListAvailable Pester | Where-Object Version -eq '5.7.1')) {
+            Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -Repository PSGallery
+          }
+          Import-Module Pester -RequiredVersion 5.7.1
+          $result = Invoke-Pester -Path .\tests\ReleaseSigning.Tests.ps1 -PassThru
+          if ($result.FailedCount -gt 0 -or $result.PassedCount -ne 6) { throw 'Signing regressions failed.' }
+
+      - name: Sign and verify final merged DLLs
+        shell: pwsh
+        env:
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: .\scripts\Sign-Release.ps1 -PackageDirectory .\signed-package
+
+      - name: Package signed bytes and source provenance
+        shell: pwsh
+        env:
+          BUILD_SHA: ${{ steps.build.outputs.sha }}
+          BUILD_RUN: ${{ steps.build.outputs.run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          "Source commit: $($env:BUILD_SHA)`nBuild run: $($env:BUILD_RUN)" |
+            Set-Content -LiteralPath .\signed-package\BUILD.txt -Encoding ascii
+          $zip = 'pdn-liquified-signed.zip'
+          Compress-Archive -Path .\signed-package\* -DestinationPath $zip
+          '{0}  {1}' -f (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant(), $zip |
+            Set-Content -LiteralPath .\SHA256SUMS.txt -Encoding ascii
+
+      - name: Upload signed release
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdn-liquified-signed-${{ steps.build.outputs.sha }}
+          path: |
+            pdn-liquified-signed.zip
+            SHA256SUMS.txt
+          if-no-files-found: error

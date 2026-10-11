@@ -4,8 +4,9 @@ This guide explains how to install the Paint.NET Distortion Plugins (Liquified, 
 
 ## Requirements
 
-- **Paint.NET 5.x or later** (download from [getpaint.net](https://www.getpaint.net/))
-- **Windows 7 or later** (due to Paint.NET requirements)
+- **Paint.NET 5.1.12 or later** (download from [getpaint.net](https://www.getpaint.net/)).
+- **Windows 10 v21H2 or later, Windows 11, or Windows Server 2022**, with a 64-bit x64 or ARM64 CPU.
+- A Direct3D 11-capable GPU is recommended. These plugins use Paint.NET's GPU effect infrastructure.
 
 ## Option 1: Automated Installation (Recommended)
 
@@ -15,8 +16,8 @@ This guide explains how to install the Paint.NET Distortion Plugins (Liquified, 
 2. Download the plugin DLLs and installer files from [Releases](https://github.com/joelst/pdn-liquified/releases/)
 3. Extract to a folder (e.g., `C:\Users\YourName\Downloads\pdn-liquified`)
 4. **Double-click** `install-plugins.bat`
-5. Grant administrator access if prompted
-6. Wait for the completion message
+5. Wait for the verification message; the default user installation does not request administrator access
+6. Restart Paint.NET
 
 ### Using PowerShell Directly
 
@@ -27,12 +28,20 @@ cd "C:\path\to\extracted\files"
 .\install-plugins.ps1
 ```
 
-The script will:
-- ✓ Auto-detect your Paint.NET installation
-- ✓ Create the Effects folder if needed
-- ✓ Copy all three plugin DLLs to the correct locations
-- ✓ Handle administrator elevation automatically
-- ✓ Verify successful installation
+The script locates all three DLLs before copying anything, uses the actual Windows
+Documents folder (including OneDrive/folder redirection), and verifies every copied
+DLL using SHA256. It accepts both a flat release package and repository Release outputs.
+It does not install duplicate copies to both locations.
+
+```powershell
+.\install-plugins.ps1 -WhatIf
+.\install-plugins.ps1 -InstallationScope System
+.\install-plugins.ps1 -InstallationScope System -PdnRoot 'D:\Apps\paint.net'
+```
+
+System installation is opt-in and requests elevation when necessary. A cancelled
+elevation, missing DLL, or failed copy returns a nonzero exit code; existing files
+alone do not count as a successful installation. Close Paint.NET before updating.
 
 ## Option 2: Manual Installation
 
@@ -45,8 +54,11 @@ If the automated installer doesn't work for any reason:
 ### Step 2: Locate Paint.NET Installation
 
 Paint.NET is typically installed in one of these locations:
-- `C:\Program Files\paint.net` (64-bit)
-- `C:\Program Files (x86)\paint.net` (32-bit)
+
+- `C:\Program Files\paint.net` (classic installer)
+- A custom directory for portable Paint.NET
+
+Microsoft Store Paint.NET uses the user Effects folder below; do not modify WindowsApps.
 
 If Paint.NET is installed elsewhere, note the installation path.
 
@@ -75,16 +87,21 @@ Files to copy:
 #### Location Option 2: User Effects folder
 
 ```cmd
-%USERPROFILE%\Documents\paint.net App Files\Effects\
+<Your actual Documents folder>\paint.net App Files\Effects\
 ```
 
 Example:
 
 ```cmd
-C:\Users\YourName\Documents\paint.net App Files\Effects\
+C:\Users\YourName\OneDrive\Documents\paint.net App Files\Effects\
 ```
 
-Copy the same three DLL files here.
+Copy the three DLL files here instead of the system folder. To find the correct
+directory, open Documents in File Explorer or run:
+
+```powershell
+Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'paint.net App Files\Effects'
+```
 
 **Note:** Create the `Effects` folder if it doesn't exist.
 
@@ -110,7 +127,9 @@ If you see all three effects, installation was successful!
 
 ### "Paint.NET installation not found"
 
-**Solution:** Paint.NET must be installed. Download and install from [getpaint.net](https://www.getpaint.net/), then run the installer again.
+**Solution:** For a custom/portable system installation, pass `-PdnRoot`. For Microsoft
+Store Paint.NET, use the default user installation. Paint.NET must be installed to run
+the plugins, but user installation does not need access to its program directory.
 
 ### "No plugin DLLs found"
 
@@ -123,16 +142,20 @@ If you see all three effects, installation was successful!
 1. Paint.NET wasn't restarted after installation
    - **Solution:** Close and reopen Paint.NET completely
 2. Files were copied to the wrong location
-   - **Solution:** Verify files are in both locations mentioned in "Option 2"
+   - **Solution:** Verify files are in one correct location mentioned in "Option 2"; remove obsolete duplicates
 3. Antivirus blocked the DLLs
-   - **Solution:** Check your antivirus/security software and whitelist the Effects folder
+   - **Solution:** Inspect the security warning and confirm the download is trusted; do not disable antivirus protection
+
+Check Paint.NET's plugin loading errors in its Settings dialog for assembly or runtime
+compatibility failures. A successful file copy does not prove that the host loaded a plugin.
 
 ### Administrator privileges required
 
-**Solution:** The system Effects folder requires admin access. The installer will request elevation automatically. If you see an issue:
+**Solution:** The default user installation does not require admin access. Only
+`-InstallationScope System` requests elevation:
 
 - Right-click `install-plugins.bat` → **Run as administrator**
-- Or use PowerShell: Right-click PowerShell → **Run as administrator**, then run `.\install-plugins.ps1`
+- Or use PowerShell: `.\install-plugins.ps1 -InstallationScope System`
 
 ### Paint.NET is crashing after installation
 
@@ -150,8 +173,7 @@ To remove the plugins:
 1. Navigate to Paint.NET Effect installation locations:
 
 - `C:\Program Files\paint.net\Effects\`
-- `%USERPROFILE%\Documents\paint.net App Files\Effects\`
-- `C:\Users\YourName\Documents\paint.net App Files\Effects\`
+- `<Your actual Documents folder>\paint.net App Files\Effects\`
 
 2. Delete the three DLL files:
 
@@ -179,5 +201,10 @@ If you want to build the plugins yourself:
 ```powershell
 git clone https://github.com/joelst/pdn-liquified.git
 cd pdn-liquified
-dotnet build -c Release LiquifiedPlugins.slnx
+dotnet build -c Release LiquifiedPlugins.slnx /p:PdnRoot='C:\path\to\stable\paint.net'
 ```
+
+Use the .NET 9 SDK and stable Paint.NET references, not development assemblies that
+require a newer .NET runtime. Release builds merge dependencies but do not deploy.
+Run the installer afterward, or opt in with `/p:DeployPlugins=true`; deployment uses
+the actual user Documents folder unless `/p:PdnEffectsDirOverride='<directory>'` is supplied.

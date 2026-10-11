@@ -46,7 +46,9 @@ public sealed class GridWarpConfigToken : EffectConfigToken
         GridWidth = copyMe.GridWidth;
         GridHeight = copyMe.GridHeight;
         Quality = copyMe.Quality;
-        Displacements = (float[])copyMe.Displacements.Clone();
+        Displacements = copyMe.Displacements == null
+            ? Array.Empty<float>()
+            : (float[])copyMe.Displacements.Clone();
     }
 
     public override object Clone() => new GridWarpConfigToken(this);
