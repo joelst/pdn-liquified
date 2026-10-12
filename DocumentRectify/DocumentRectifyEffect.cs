@@ -85,7 +85,7 @@ internal sealed partial class DocumentRectifyEffect : GpuImageEffect<DocumentRec
       DocumentRectifyConfigToken oldToken,
       DocumentRectifyConfigToken newToken)
   {
-    if (oldToken.Quality != newToken.Quality)
+    if (Math.Clamp(oldToken.Quality, 1, 4) != Math.Clamp(newToken.Quality, 1, 4))
     {
       return InspectTokenAction.RecreateOutput;
     }
@@ -108,8 +108,8 @@ internal sealed partial class DocumentRectifyEffect : GpuImageEffect<DocumentRec
         out float blx, out float bly);
 
     GetTargetRect(
-        this.Token.AspectMode,
-        this.Token.CustomAspect,
+        Enum.IsDefined(this.Token.AspectMode) ? this.Token.AspectMode : DocumentRectifyAspectMode.PreserveDetected,
+        float.IsFinite(this.Token.CustomAspect) ? this.Token.CustomAspect : 1f,
         canvasW, canvasH,
         tlx, tly, trx, try_, brx, bry, blx, bly,
         out float rectX, out float rectY, out float rectW, out float rectH);
@@ -273,15 +273,18 @@ internal sealed partial class DocumentRectifyEffect : GpuImageEffect<DocumentRec
       return;
     }
 
-    tlx = Math.Clamp(corners[0], 0f, 1f) * imgW;
-    tly = Math.Clamp(corners[1], 0f, 1f) * imgH;
-    trx = Math.Clamp(corners[2], 0f, 1f) * imgW;
-    try_ = Math.Clamp(corners[3], 0f, 1f) * imgH;
-    brx = Math.Clamp(corners[4], 0f, 1f) * imgW;
-    bry = Math.Clamp(corners[5], 0f, 1f) * imgH;
-    blx = Math.Clamp(corners[6], 0f, 1f) * imgW;
-    bly = Math.Clamp(corners[7], 0f, 1f) * imgH;
+    tlx = NormalizeCoordinate(corners[0], 0f) * imgW;
+    tly = NormalizeCoordinate(corners[1], 0f) * imgH;
+    trx = NormalizeCoordinate(corners[2], 1f) * imgW;
+    try_ = NormalizeCoordinate(corners[3], 0f) * imgH;
+    brx = NormalizeCoordinate(corners[4], 1f) * imgW;
+    bry = NormalizeCoordinate(corners[5], 1f) * imgH;
+    blx = NormalizeCoordinate(corners[6], 0f) * imgW;
+    bly = NormalizeCoordinate(corners[7], 1f) * imgH;
   }
+
+  private static float NormalizeCoordinate(float value, float fallback) =>
+      float.IsFinite(value) ? Math.Clamp(value, 0f, 1f) : fallback;
 
   private static bool TryComputeHomography(
       float x0, float y0, float u0, float v0,

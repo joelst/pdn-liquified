@@ -2,7 +2,7 @@
 REM Paint.NET Distortion Plugins Installer (Batch Wrapper)
 REM This script launches the PowerShell installer
 
-setlocal enabledelayedexpansion
+setlocal
 
 echo Paint.NET Distortion Plugins Installer
 echo ======================================
@@ -22,4 +22,6 @@ REM Run the PowerShell script
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%install-plugins.ps1"
 
 REM Exit with the same code as PowerShell
-exit /b %ERRORLEVEL%
+set INSTALL_EXIT_CODE=%ERRORLEVEL%
+pause
+exit /b %INSTALL_EXIT_CODE%

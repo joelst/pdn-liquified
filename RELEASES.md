@@ -24,7 +24,7 @@ pdn-liquified-v1.0.0/
 1. Download the release ZIP file from [Releases](../../releases)
 2. Extract to any folder
 3. **Double-click `install-plugins.bat`**
-4. Grant administrator access if prompted
+4. The default user install does not require administrator access
 5. Done! Restart Paint.NET to see the new effects
 
 ### Full Documentation
@@ -32,6 +32,50 @@ pdn-liquified-v1.0.0/
 For detailed installation steps and troubleshooting, see [INSTALL.md](./INSTALL.md)
 
 ## How to Create a Release
+
+### Authenticode signing
+
+The **Signed release** workflow uses the same Azure Artifact Signing (formerly Trusted
+Signing) account and public-trust certificate profile as `joelst/flint`. No signing
+private key or client secret is stored in this repository. GitHub OIDC authenticates
+through the `release` environment, which permits only the `main` branch.
+
+After a successful main-branch **Build**, the workflow signs the three final merged DLLs,
+verifies trusted signatures and RFC3161 timestamps, and creates
+`pdn-liquified-signed.zip` with signed-byte SHA256 checksums and build provenance.
+It can also be dispatched from `main` with a successful Build run ID. Failed builds,
+pull-request/fork artifacts, other workflows, and unsigned or untimestamped results
+are rejected. The existing Build artifacts remain unsigned development artifacts.
+
+Attach the ZIP and its external `SHA256SUMS.txt` from the **Signed release** artifact
+to the GitHub release. Never rebuild, trim, merge, or modify DLLs after signing.
+The workflow prepares a signed artifact; it does not publish a release automatically.
+The ZIP and installer wrappers are not themselves Authenticode-signed.
+
+Check an extracted DLL on Windows:
+
+```powershell
+Get-AuthenticodeSignature -LiteralPath .\LiquifiedPlugin.dll |
+    Select-Object Status, SignerCertificate, TimeStamperCertificate
+```
+
+Local signing of an extracted Release package is also supported after Azure CLI login
+to the signing tenant and installing `ArtifactSigning` version `0.1.8`:
+
+```powershell
+.\scripts\Sign-Release.ps1 -PackageDirectory 'C:\path\to\release-package'
+```
+
+Configure `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`, and
+`AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME` in the local environment. The script
+fails when configuration or authentication is missing; it never silently skips signing.
+GitHub's release environment holds these profile variables and the identity identifiers
+`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`. These are identifiers,
+not client-secret credentials. Federation uses
+`repo:joelst/pdn-liquified:environment:release`.
+
+Signing identifies the publisher and detects binary tampering. It does not guarantee
+SmartScreen reputation, Paint.NET compatibility, or correct GPU behavior.
 
 ### Prerequisites
 
@@ -107,7 +151,7 @@ See [INSTALL.md](INSTALL.md) for detailed instructions and troubleshooting.
 ## Requirements
 
 - Paint.NET 5.x or later
-- Windows 7 or later
+- Windows 10 v21H2 or later, Windows 11, or Windows Server 2022 (64-bit)
 - .NET 9.0 runtime (included with Paint.NET)
 
 ## Features
@@ -115,6 +159,9 @@ See [INSTALL.md](INSTALL.md) for detailed instructions and troubleshooting.
 ### Liquified
 - 10 interactive brush modes with real-time CPU preview
 - GPU rendering with RGSS multisampling for smooth results
+- Shared full-resolution inverse displacement field with no stroke-count truncation
+- Brush Rate and optional Windows pen pressure; mesh, backdrop, mask and reconstruction controls
+- Explicit 8,388,608-pixel resource limit (4K supported), without silent downsampling
 - Freeze/Unfreeze to protect areas from distortion
 - Undo/Redo/Reset with keyboard shortcuts
 
@@ -164,7 +211,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ### GitHub Actions Artifacts (Development)
 
-- CI pipeline publishes Debug builds as artifacts
+- CI pipeline publishes merged Release builds and flat packages as stable/beta-labelled artifacts
 - Useful for testing and development
 - Available for 90 days by default
 - Located in workflow run details
@@ -190,6 +237,8 @@ See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 5. **Test release packages before publishing**
    - Extract and run installer script locally
+   - Run `.\tests\Installer.Tests.ps1` and `dotnet run --project tests\Liquified.RegressionTests -c Release`
+   - Run `.\tests\Test-PluginCompatibility.ps1 -PortableDirectory '<disposable portable host>'` against stable and beta
    - Verify plugins load correctly in Paint.NET
    - Test on both Windows 10 and Windows 11
 

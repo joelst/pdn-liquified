@@ -7,6 +7,9 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace LiquifiedPlugin;
@@ -21,9 +24,11 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   private FlowLayoutPanel modeButtonsPanel = null!;
   private readonly List<Button> modeButtons = new();
   private Label modeDescLabel = null!;
-  private TrackBar brushSizeSlider = null!, strengthSlider = null!, densitySlider = null!, qualitySlider = null!;
-  private Label brushSizeValue = null!, strengthValue = null!, densityValue = null!, qualityValue = null!;
+  private TrackBar brushSizeSlider = null!, strengthSlider = null!, densitySlider = null!, rateSlider = null!, reconstructSlider = null!, qualitySlider = null!, meshSizeSlider = null!;
+  private Label brushSizeValue = null!, strengthValue = null!, densityValue = null!, rateValue = null!, reconstructValue = null!, qualityValue = null!, meshSizeValue = null!, statusLabel = null!;
   private Button undoBtn = null!, redoBtn = null!, resetBtn = null!;
+  private CheckBox showMeshCheck = null!, showMaskCheck = null!, showBackdropCheck = null!;
+  private CheckBox penPressureCheck = null!;
   private Panel canvas = null!;
   private LiquifiedMode selectedMode = LiquifiedMode.ForwardWarp;
 
@@ -37,20 +42,42 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   // ── Stroke data ──────────────────────────────────────────
   private readonly List<BrushStroke> strokes = new();
-  private readonly List<BrushStroke> redoStack = new();
+  private readonly List<HistoryState> undoStack = new();
+  private readonly List<HistoryState> redoStack = new();
+  private const int MaximumUndoSteps = 256;
+  private sealed record HistoryState(int StrokeCount, bool[] InitialMask, int Reconstruction);
+  private readonly List<BrushStroke> historyStrokeArchive = new();
+  private bool meshHasUnresolvedNodes;
+  private int previousReconstruction;
   private BrushStroke? currentStroke;
   private bool[] freezeMask = Array.Empty<bool>();
-  private Surface? freezeOverlaySurface;
+  private bool[] freezeMaskBaseline = Array.Empty<bool>();
   private int frozenPixelCount;
-  private bool suppressFreezeInvalidate;
 
   // ── CPU preview surfaces ─────────────────────────────────
   private Surface? origSurface;
   private Surface? workSurface;
-  private Surface? snapSurface;
+  private Surface? backdropSurface;
+  private byte[] selectionCoverage = Array.Empty<byte>();
+  private readonly System.Windows.Forms.Timer previewTimer = new() { Interval = 40 };
+  private readonly System.Windows.Forms.Timer rateTimer = new() { Interval = 50 };
+  private bool previewPending;
+  private bool previewRunning;
+  private float[]? displayedMap;
+  private string? previewError;
+  private float[]? cachedSampleMap;
+  private bool[]? cachedFreezeMask;
+  private bool[]? cachedInitialMask;
+  private List<BrushStroke> cachedHistory = new();
+  private List<int> cachedPointCounts = new();
+  private CancellationTokenSource? previewCancellation;
+  private readonly object previewSurfaceLock = new();
+  private int previewGeneration;
+  private bool suppressUiEvents;
+  private bool pointerCaptureActive;
+  private bool penPressureAvailable;
+  private float lastPointerPressure = 1f;
 
-  private static readonly ColorBgra FreezeOverlayColor = ColorBgra.FromBgra(255, 64, 0, 80);
-  private static readonly ColorBgra TransparentOverlayColor = ColorBgra.FromBgra(0, 0, 0, 0);
 
   // ── Constants ────────────────────────────────────────────
   private const float MinZoom = 0.1f;
@@ -93,7 +120,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   };
 
   private bool initialFitDone;
-  private readonly float _dpi;
+  private float _dpi;
   private int S(int v) => (int)(v * _dpi);
 
   // ═════════════════════════════════════════════════════════
@@ -108,6 +135,19 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     WireEvents();
   }
 
+  protected override void OnDpiChanged(DpiChangedEventArgs e)
+  {
+    float oldDpi = _dpi;
+    base.OnDpiChanged(e);
+    float newDpi = Math.Max(1f, e.DeviceDpiNew / 96f);
+    if (Math.Abs(newDpi - oldDpi) > 0.001f)
+    {
+      Scale(new SizeF(newDpi / oldDpi, newDpi / oldDpi));
+      _dpi = newDpi;
+      canvas?.Invalidate();
+    }
+  }
+
   // ═════════════════════════════════════════════════════════
   //  Token integration
   // ═════════════════════════════════════════════════════════
@@ -120,14 +160,46 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   protected override void OnUpdateDialogFromToken(EffectConfigToken effectToken)
   {
     var token = (LiquifiedConfigToken)effectToken;
+    LiquifiedDeformation.ValidateBrushSettings(token.Mode, token.BrushSize, token.Strength, token.Density);
+    if (token.Quality is < 1 or > 4)
+      throw new ArgumentOutOfRangeException(nameof(token.Quality));
+    if (token.Rate is < 1 or > 120)
+      throw new ArgumentOutOfRangeException(nameof(token.Rate));
+    if (!double.IsFinite(token.ReconstructAmount) || token.ReconstructAmount is < 0 or > 1)
+      throw new ArgumentOutOfRangeException(nameof(token.ReconstructAmount));
 
     strokes.Clear();
     if (token.Strokes != null)
     {
       foreach (var s in token.Strokes)
+      {
+        if (token.FrozenMask is { Length: > 0 } && !token.FrozenMaskIsInitial &&
+            s.Mode is LiquifiedMode.Freeze or LiquifiedMode.Unfreeze)
+          continue;
         strokes.Add(CloneStroke(s));
+      }
+    }
+    if (token.FrozenMask is { Length: > 0 })
+    {
+      if (origSurface != null && token.FrozenMask.Length != checked(origSurface.Width * origSurface.Height))
+        throw new ArgumentException("Freeze mask dimensions do not match the source image.", nameof(effectToken));
+      freezeMaskBaseline = (bool[])token.FrozenMask.Clone();
+      if (origSurface != null)
+      {
+        freezeMask = (bool[])freezeMaskBaseline.Clone();
+        frozenPixelCount = CountFrozenPixels(freezeMask);
+      }
+    }
+    else if (origSurface != null)
+    {
+      int pixelCount = checked(origSurface.Width * origSurface.Height);
+      freezeMaskBaseline = new bool[pixelCount];
+      freezeMask = new bool[pixelCount];
+      frozenPixelCount = 0;
     }
     redoStack.Clear();
+    undoStack.Clear();
+    historyStrokeArchive.Clear();
 
     // Guard: controls may not exist yet if called during base constructor
     if (modeButtonsPanel != null)
@@ -144,7 +216,11 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     token.BrushSize = brushSizeSlider.Value;
     token.Strength = strengthSlider.Value / 100.0;
     token.Density = densitySlider.Value / 100.0;
+    token.Rate = rateSlider.Value;
+    token.ReconstructAmount = reconstructSlider.Value / 100.0;
     token.Quality = qualitySlider.Value;
+    token.FrozenMask = (bool[])freezeMaskBaseline.Clone();
+    token.FrozenMaskIsInitial = true;
 
     token.Strokes = new List<BrushStroke>(strokes.Count);
     foreach (var s in strokes)
@@ -154,39 +230,49 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   protected override void OnLoaded()
   {
     base.OnLoaded();
+    LiquifiedDeformation.ValidateDocumentSize(Environment.Document.Size.Width, Environment.Document.Size.Height);
 
-    // Each dialog session starts with a blank slate
-    strokes.Clear();
-    redoStack.Clear();
-
-    try
+    using var srcBmp = Environment.GetSourceBitmapBgra32();
+    using var compositeBmp = Environment.Document.GetBitmapBgra32();
+    using var selectionBmp = Environment.Selection.MaskBitmap;
+    var size = srcBmp.Size;
+    if (size.Width > 0 && size.Height > 0)
     {
-      using var srcBmp = Environment.GetSourceBitmapBgra32();
-      var size = srcBmp.Size;
-      if (size.Width > 0 && size.Height > 0)
+      LiquifiedDeformation.ValidateDocumentSize(size.Width, size.Height);
+      origSurface?.Dispose();
+      workSurface?.Dispose();
+      backdropSurface?.Dispose();
+      int pixelCount = checked(size.Width * size.Height);
+      origSurface = new Surface(size.Width, size.Height);
+      unsafe
       {
-        origSurface?.Dispose();
-        workSurface?.Dispose();
-        freezeOverlaySurface?.Dispose();
-        origSurface = new Surface(size.Width, size.Height);
-        unsafe
-        {
-          srcBmp.CopyPixels(origSurface.Scan0.VoidStar, origSurface.Stride,
-              (uint)origSurface.Scan0.Length, null);
-        }
-        workSurface = origSurface.Clone();
-        freezeOverlaySurface = new Surface(size.Width, size.Height);
-        freezeMask = new bool[size.Width * size.Height];
-        frozenPixelCount = 0;
-        RegeneratePreview();
-        // Defer FitToWindow until after layout is complete so canvas has its real size
-        initialFitDone = false;
-        BeginInvoke(new Action(FitToWindow));
+        srcBmp.CopyPixels(origSurface.Scan0.VoidStar, origSurface.Stride,
+            (uint)origSurface.Scan0.Length, null);
       }
-    }
-    catch
-    {
-      // Source surface not available — canvas stays blank
+      workSurface = origSurface.Clone();
+      backdropSurface = new Surface(size.Width, size.Height);
+      unsafe
+      {
+        compositeBmp.CopyPixels(backdropSurface.Scan0.VoidStar, backdropSurface.Stride,
+            (uint)backdropSurface.Scan0.Length, null);
+      }
+      selectionCoverage = new byte[pixelCount];
+      unsafe
+      {
+        fixed (byte* selection = selectionCoverage)
+          selectionBmp.CopyPixels(selection, size.Width, (uint)selectionCoverage.Length, null);
+      }
+      freezeMask = new bool[pixelCount];
+      if (freezeMaskBaseline.Length > 0 && freezeMaskBaseline.Length != pixelCount)
+        throw new ArgumentException("Freeze mask dimensions do not match the source image.");
+      if (freezeMaskBaseline.Length == pixelCount)
+        Array.Copy(freezeMaskBaseline, freezeMask, pixelCount);
+      else
+        freezeMaskBaseline = new bool[pixelCount];
+      frozenPixelCount = CountFrozenPixels(freezeMask);
+      RegeneratePreview();
+      initialFitDone = false;
+      BeginInvoke(new Action(FitToWindow));
     }
   }
 
@@ -206,7 +292,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     StartPosition = FormStartPosition.CenterParent;
     WindowState = FormWindowState.Maximized;
 
-    int panelW = S(270);
+    int panelW = S(300);
     int ctrlW = panelW - S(30);
 
     // ── Left tool panel (FlowLayout for DPI-safe stacking) ──
@@ -218,7 +304,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       WrapContents = false,
       AutoScroll = true,
       Padding = new Padding(S(8), S(6), S(4), S(6)),
-      BackColor = PanelBg
+      BackColor = SystemInformation.HighContrast ? SystemColors.Control : PanelBg
     };
 
     leftPanel.Controls.Add(MakeAutoLabel("Mode:"));
@@ -241,7 +327,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       Text = GetModeDescription((int)selectedMode),
       AutoSize = true,
       MaximumSize = new Size(ctrlW, 0),
-      ForeColor = Color.FromArgb(160, 170, 180),
+      ForeColor = SystemInformation.HighContrast ? SystemColors.ControlText : Color.FromArgb(160, 170, 180),
       Font = new Font(Font.FontFamily, Font.Size * 0.9f, FontStyle.Italic),
       Margin = new Padding(0, 0, 0, S(4))
     };
@@ -249,24 +335,77 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
     (brushSizeSlider, brushSizeValue) = AddSlider(leftPanel, "Brush Size:", ctrlW, 5, 1200, 80, v => $"{v} px");
     leftPanel.Controls.Add(MakeHintLabel("Radius of the brush area, in pixels.", ctrlW));
-    (strengthSlider, strengthValue) = AddSlider(leftPanel, "Strength:", ctrlW, 5, 100, 50, v => $"{v}%");
+    (strengthSlider, strengthValue) = AddSlider(leftPanel, "Pressure / Strength:", ctrlW, 5, 100, 50, v => $"{v}%");
     strengthSlider.TickFrequency = 5;
     strengthSlider.SmallChange = 5;
     strengthSlider.LargeChange = 10;
     leftPanel.Controls.Add(MakeHintLabel("How far pixels are displaced per brush application.", ctrlW));
     (densitySlider, densityValue) = AddSlider(leftPanel, "Density:", ctrlW, 0, 100, 50, v => $"{v}%");
     leftPanel.Controls.Add(MakeHintLabel("Falloff sharpness. Low = soft edges, high = uniform.", ctrlW));
+    (rateSlider, rateValue) = AddSlider(leftPanel, "Rate:", ctrlW, 1, 120, 20, v => $"{v}/s");
+    leftPanel.Controls.Add(MakeHintLabel("Repeated applications per second while the pen is held still.", ctrlW));
+    (reconstructSlider, reconstructValue) = AddSlider(leftPanel, "Reconstruct Amount:", ctrlW, 0, 100, 0, v => $"{v}%");
+    leftPanel.Controls.Add(MakeHintLabel("Blend the complete deformation field back toward the original image.", ctrlW));
     (qualitySlider, qualityValue) = AddSlider(leftPanel, "Quality:", ctrlW, 1, 4, 2, v => $"{v}x");
     leftPanel.Controls.Add(MakeHintLabel("RGSS multisampling level. Higher = smoother but slower.", ctrlW));
+    (meshSizeSlider, meshSizeValue) = AddSlider(leftPanel, "Mesh Size:", ctrlW, 8, 256, 32, v => $"{v} px");
+
+    showMeshCheck = MakeCheckBox("Show Mesh");
+    showMaskCheck = MakeCheckBox("Show Mask", true);
+    showBackdropCheck = MakeCheckBox("Show Backdrop");
+    penPressureCheck = MakeCheckBox("Use Pen Pressure", true);
+    leftPanel.Controls.Add(showMeshCheck);
+    leftPanel.Controls.Add(showMaskCheck);
+    leftPanel.Controls.Add(showBackdropCheck);
+    leftPanel.Controls.Add(penPressureCheck);
+    leftPanel.Controls.Add(MakeHintLabel("Pen pressure requires a Windows pen driver that reports pressure. Mouse/unsupported drivers use full intensity.", ctrlW));
+    leftPanel.Controls.Add(MakeHintLabel("Mesh follows the image deformation. Folded or unsolved mesh segments are omitted and reported in status. Undo retains 256 steps.", ctrlW));
+
+    var maskRow = new FlowLayoutPanel
+    {
+      FlowDirection = FlowDirection.LeftToRight,
+      AutoSize = true,
+      WrapContents = false,
+      BackColor = Color.Transparent,
+      Margin = new Padding(0, S(2), 0, S(2))
+    };
+    var maskNoneBtn = MakeButton("Mask None");
+    var maskAllBtn = MakeButton("Mask All");
+    var maskInvertBtn = MakeButton("Invert");
+    maskNoneBtn.Click += (_, _) => SetMask(LiquifiedMaskOperation.None);
+    maskAllBtn.Click += (_, _) => SetMask(LiquifiedMaskOperation.All);
+    maskInvertBtn.Click += (_, _) => SetMask(LiquifiedMaskOperation.Invert);
+    maskRow.Controls.AddRange(new Control[] { maskNoneBtn, maskAllBtn, maskInvertBtn });
+    leftPanel.Controls.Add(maskRow);
+
+    var reconstructionRow = new FlowLayoutPanel
+    {
+      FlowDirection = FlowDirection.LeftToRight,
+      AutoSize = true,
+      WrapContents = false,
+      BackColor = Color.Transparent,
+      Margin = new Padding(0, S(2), 0, S(2))
+    };
+    var reconstructAllBtn = MakeButton("Reconstruct All");
+    var restoreAllBtn = MakeButton("Restore All");
+    reconstructAllBtn.Click += (_, _) => { reconstructSlider.Value = reconstructSlider.Maximum; PushUpdate(); RequestPreview(); };
+    restoreAllBtn.Click += (_, _) => ResetStrokes();
+    reconstructionRow.Controls.AddRange(new Control[] { reconstructAllBtn, restoreAllBtn });
+    leftPanel.Controls.Add(reconstructionRow);
+
+    statusLabel = MakeAutoLabel("Ready");
+    statusLabel.MaximumSize = new Size(ctrlW, 0);
+    leftPanel.Controls.Add(statusLabel);
 
     var helpLabel = new Label
     {
       Text = "Left-click: paint effect\nRight-click: pan view\n" +
              "Mouse wheel: zoom\nDouble-click: fit to window\n" +
-             "Ctrl+Z / Ctrl+Y: undo / redo",
+             "Ctrl+Z / Ctrl+Y: undo / redo\n" +
+             "[ / ]: brush size\nArrow keys: move brush; Shift+Arrow: faster",
       AutoSize = true,
       MaximumSize = new Size(ctrlW, 0),
-      ForeColor = LabelColor,
+      ForeColor = SystemInformation.HighContrast ? SystemColors.ControlText : LabelColor,
       Margin = new Padding(0, S(8), 0, S(8))
     };
     leftPanel.Controls.Add(helpLabel);
@@ -281,9 +420,9 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       Margin = new Padding(0, S(2), 0, S(2)),
       BackColor = Color.Transparent
     };
-    undoBtn = MakeIconButton("\u21B6", "Undo last stroke");
-    redoBtn = MakeIconButton("\u21B7", "Redo last undone stroke");
-    resetBtn = MakeIconButton("\u21BA", "Clear all strokes");
+    undoBtn = MakeIconButton("\u21B6", "Undo last edit (up to 256 retained steps)");
+    redoBtn = MakeIconButton("\u21B7", "Redo last undone edit");
+    resetBtn = MakeIconButton("\u21BA", "Restore deformation while preserving the freeze mask");
     actionRow.Controls.AddRange(new Control[] { undoBtn, redoBtn, resetBtn });
     leftPanel.Controls.Add(actionRow);
 
@@ -310,11 +449,13 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     CancelButton = cancelBtn;
 
     // ── Canvas (double-buffered) ──
-    canvas = new DoubleBufferedPanel
+    var canvasPanel = new DoubleBufferedPanel
     {
       Dock = DockStyle.Fill,
-      BackColor = Color.FromArgb(48, 48, 48)
+      BackColor = SystemInformation.HighContrast ? SystemColors.Window : Color.FromArgb(48, 48, 48)
     };
+    canvasPanel.SetPenInput(HandlePenPointer);
+    canvas = canvasPanel;
 
     Controls.Add(canvas);
     Controls.Add(leftPanel);
@@ -331,7 +472,10 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     uiToolTip.SetToolTip(brushSizeSlider, "Brush radius in pixels");
     uiToolTip.SetToolTip(strengthSlider, "Displacement strength per stroke");
     uiToolTip.SetToolTip(densitySlider, "Brush falloff density");
+    uiToolTip.SetToolTip(rateSlider, "Applications per second while the pointer is stationary");
+    uiToolTip.SetToolTip(reconstructSlider, "Blend the complete deformation map back toward identity");
     uiToolTip.SetToolTip(qualitySlider, "RGSS quality for final render");
+    uiToolTip.SetToolTip(meshSizeSlider, "Spacing of the visual mesh overlay in image pixels");
     uiToolTip.SetToolTip(canvas, "Left-click paint, right-click pan, wheel zoom");
 
     brushSizeSlider.ValueChanged += (_, _) =>
@@ -341,10 +485,54 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     };
     strengthSlider.ValueChanged += (_, _) => { strengthValue.Text = $"{strengthSlider.Value}%"; };
     densitySlider.ValueChanged += (_, _) => { densityValue.Text = $"{densitySlider.Value}%"; };
+    rateSlider.ValueChanged += (_, _) =>
+    {
+      rateValue.Text = $"{rateSlider.Value}/s";
+      rateTimer.Interval = Math.Max(8, 1000 / rateSlider.Value);
+      if (!suppressUiEvents) PushUpdate();
+    };
+    reconstructSlider.ValueChanged += (_, _) =>
+    {
+      reconstructValue.Text = $"{reconstructSlider.Value}%";
+      if (!suppressUiEvents)
+      {
+        FinishCurrentStroke();
+        AddUndoState(CaptureHistory() with { Reconstruction = previousReconstruction });
+        redoStack.Clear();
+        if (historyStrokeArchive.Count > strokes.Count)
+          historyStrokeArchive.RemoveRange(strokes.Count, historyStrokeArchive.Count - strokes.Count);
+        previousReconstruction = reconstructSlider.Value;
+        UpdateButtons();
+        PushUpdate();
+        RequestPreview();
+      }
+    };
     qualitySlider.ValueChanged += (_, _) =>
     {
       qualityValue.Text = $"{qualitySlider.Value}x";
-      PushUpdate(); // quality affects GPU render
+      if (!suppressUiEvents) PushUpdate(); // quality affects GPU render
+    };
+    meshSizeSlider.ValueChanged += (_, _) =>
+    {
+      meshSizeValue.Text = $"{meshSizeSlider.Value} px";
+      canvas?.Invalidate();
+    };
+    showMeshCheck.CheckedChanged += (_, _) => canvas?.Invalidate();
+    showMaskCheck.CheckedChanged += (_, _) => canvas?.Invalidate();
+    showBackdropCheck.CheckedChanged += (_, _) =>
+    {
+      if (showBackdropCheck.Checked)
+      {
+        try
+        {
+          RefreshCompositedBackdrop();
+        }
+        catch (Exception ex)
+        {
+          statusLabel.Text = $"Backdrop preview error: {ex.Message}";
+        }
+      }
+      canvas?.Invalidate();
     };
 
     undoBtn.Click += (_, _) => Undo();
@@ -366,6 +554,17 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       }
     };
 
+    previewTimer.Tick += (_, _) =>
+    {
+      previewTimer.Stop();
+      if (previewPending && !previewRunning)
+      {
+        previewPending = false;
+        RegeneratePreview();
+      }
+    };
+    rateTimer.Tick += (_, _) => ApplyRateTick();
+
     KeyPreview = true;
     KeyDown += (_, e) =>
     {
@@ -376,6 +575,21 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         zoom = 1f;
         pan = PointF.Empty;
         canvas.Invalidate();
+        e.Handled = true;
+      }
+      else if (e.KeyCode is Keys.OemOpenBrackets or Keys.Subtract)
+      {
+        brushSizeSlider.Value = Math.Max(brushSizeSlider.Minimum, brushSizeSlider.Value - 5);
+        e.Handled = true;
+      }
+      else if (e.KeyCode is Keys.OemCloseBrackets or Keys.Add)
+      {
+        brushSizeSlider.Value = Math.Min(brushSizeSlider.Maximum, brushSizeSlider.Value + 5);
+        e.Handled = true;
+      }
+      else if (e.KeyCode is Keys.Left or Keys.Right or Keys.Up or Keys.Down)
+      {
+        NudgeBrush(e.KeyCode, e.Shift ? 10f : 1f);
         e.Handled = true;
       }
     };
@@ -390,7 +604,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     var g = e.Graphics;
     g.Clear(canvas.BackColor);
 
-    if (workSurface == null) return;
+    if (workSurface == null || origSurface == null) return;
 
     g.InterpolationMode = zoom > 2f
         ? InterpolationMode.NearestNeighbor
@@ -398,7 +612,10 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     g.PixelOffsetMode = PixelOffsetMode.Half;
 
     var imgRect = GetImageRect();
-    using (var bmp = workSurface.CreateAliasedBitmap())
+    Surface displayedSurface = showBackdropCheck?.Checked == true && backdropSurface != null
+      ? backdropSurface
+      : workSurface;
+    using (var bmp = displayedSurface.CreateAliasedBitmap())
     {
       g.DrawImage(bmp, imgRect);
     }
@@ -409,11 +626,11 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       g.DrawRectangle(pen, imgRect.X, imgRect.Y, imgRect.Width, imgRect.Height);
     }
 
-    if (freezeOverlaySurface != null && frozenPixelCount > 0)
-    {
-      using var overlayBmp = freezeOverlaySurface.CreateAliasedBitmap();
-      g.DrawImage(overlayBmp, imgRect);
-    }
+    if (showMaskCheck?.Checked == true && frozenPixelCount > 0)
+      DrawFrozenOverlay(g, imgRect);
+
+    if (showMeshCheck?.Checked == true)
+      DrawMesh(g, imgRect);
 
     // Brush cursor
     var mpt = canvas.PointToClient(MousePosition);
@@ -421,6 +638,95 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     {
       DrawBrushCursor(g, mpt);
     }
+    UpdateStatus(mpt);
+  }
+
+  private void DrawFrozenOverlay(Graphics g, RectangleF imageRect)
+  {
+    if (origSurface == null || freezeMask.Length == 0)
+      return;
+    Rectangle visible = Rectangle.Intersect(
+      Rectangle.Round(imageRect), canvas.ClientRectangle);
+    if (visible.IsEmpty)
+      return;
+
+    PointF topLeft = ScreenToImage(visible.Location);
+    PointF bottomRight = ScreenToImage(new Point(visible.Right, visible.Bottom));
+    int left = Math.Clamp((int)MathF.Floor(topLeft.X), 0, origSurface.Width);
+    int top = Math.Clamp((int)MathF.Floor(topLeft.Y), 0, origSurface.Height);
+    int right = Math.Clamp((int)MathF.Ceiling(bottomRight.X), 0, origSurface.Width);
+    int bottom = Math.Clamp((int)MathF.Ceiling(bottomRight.Y), 0, origSurface.Height);
+    Color overlay = SystemInformation.HighContrast
+      ? SystemColors.Highlight
+      : Color.FromArgb(100, 80, 170, 255);
+    using var brush = new SolidBrush(overlay);
+    for (int y = top; y < bottom; y++)
+    {
+      int row = y * origSurface.Width;
+      for (int x = left; x < right; x++)
+      {
+        if (!freezeMask[row + x])
+          continue;
+        g.FillRectangle(brush,
+          pan.X + x * zoom, pan.Y + y * zoom,
+          Math.Max(1f, zoom), Math.Max(1f, zoom));
+      }
+    }
+  }
+
+  private void DrawMesh(Graphics g, RectangleF imageRect)
+  {
+    if (origSurface == null || displayedMap == null)
+      return;
+    int step = meshSizeSlider?.Value ?? 32;
+    Color color = SystemInformation.HighContrast ? SystemColors.WindowText : Color.FromArgb(90, 230, 230, 230);
+    using var pen = new Pen(color, 1f);
+    GraphicsState state = g.Save();
+    g.SetClip(imageRect, CombineMode.Intersect);
+    meshHasUnresolvedNodes = false;
+    PointF? Node(int x, int y)
+    {
+      if (!LiquifiedDeformation.TryGetForwardMeshPoint(displayedMap, origSurface.Width, origSurface.Height,
+          x, y, out float outputX, out float outputY))
+      {
+        meshHasUnresolvedNodes = true;
+        return null;
+      }
+      return new PointF(pan.X + outputX * zoom, pan.Y + outputY * zoom);
+    }
+    void Segment(PointF? a, PointF? b)
+    {
+      if (a.HasValue && b.HasValue)
+        g.DrawLine(pen, a.Value, b.Value);
+    }
+    for (int y = 0; y < origSurface.Height; y += step)
+    {
+      for (int x = 0; x < origSurface.Width - 1; x += step)
+        Segment(Node(x, y), Node(Math.Min(x + step, origSurface.Width - 1), y));
+    }
+    for (int x = 0; x < origSurface.Width; x += step)
+      for (int y = 0; y < origSurface.Height - 1; y += step)
+        Segment(Node(x, y), Node(x, Math.Min(y + step, origSurface.Height - 1)));
+    g.Restore(state);
+  }
+
+  private void UpdateStatus(Point cursor)
+  {
+    if (statusLabel == null || origSurface == null)
+      return;
+    if (previewError is not null)
+    {
+      statusLabel.Text = previewError;
+      return;
+    }
+    PointF image = ScreenToImage(cursor);
+    statusLabel.Text = $"Mode: {ModeEntries[(int)selectedMode].Name} | " +
+      $"Brush: {brushSizeSlider.Value}px | Rate: {rateSlider.Value}/s | " +
+      $"Zoom: {zoom:P0} | Frozen: {frozenPixelCount:N0} | " +
+      $"Position: {(int)image.X}, {(int)image.Y} | " +
+      (pointerCaptureActive && penPressureCheck.Checked && penPressureAvailable ? $"Pen: {lastPointerPressure:P0}" : "Pressure: full (mouse/unsupported driver)") +
+      (showMeshCheck.Checked ? (meshHasUnresolvedNodes ? " | Mesh: ambiguous/folded or unsolved segments omitted" : " | Mesh: forward deformation") : string.Empty) +
+      $" | Undo: {undoStack.Count}/{MaximumUndoSteps}";
   }
 
   private void DrawBrushCursor(Graphics g, Point mousePos)
@@ -431,7 +737,9 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
     float r = brushSizeSlider.Value * 0.5f * zoom;
 
-    Color cursorColor = selectedMode switch
+    Color cursorColor = SystemInformation.HighContrast
+      ? SystemColors.Highlight
+      : selectedMode switch
     {
       LiquifiedMode.Freeze => Color.Orange,
       LiquifiedMode.Unfreeze => Color.Cyan,
@@ -462,6 +770,10 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   private void Canvas_MouseDown(object? sender, MouseEventArgs e)
   {
+    if (pointerCaptureActive && ReferenceEquals(sender, canvas))
+      return;
+    if (ReferenceEquals(sender, canvas))
+      lastPointerPressure = 1f;
     canvas.Focus();
 
     if (e.Button == MouseButtons.Left && origSurface != null)
@@ -470,12 +782,8 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       if (ip.X >= 0 && ip.Y >= 0 && ip.X < origSurface.Width && ip.Y < origSurface.Height)
       {
         LiquifiedMode mode = selectedMode;
-        bool isFreezeMode = mode == LiquifiedMode.Freeze || mode == LiquifiedMode.Unfreeze;
-        if (!isFreezeMode && IsPointFrozen(ip))
-        {
-          return;
-        }
-
+        FinishCurrentStroke();
+        RecordUndo();
         isDrawing = true;
         currentStroke = new BrushStroke
         {
@@ -484,19 +792,13 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
           Strength = strengthSlider.Value / 100.0,
           Density = densitySlider.Value / 100.0
         };
-        snapSurface?.Dispose();
-        snapSurface = workSurface!.Clone();
-        currentStroke.Points.Add(new[] { ip.X, ip.Y });
+        currentStroke.Points.Add(new[] { ip.X, ip.Y, 1f, 0f, 0f });
         lastBrushPt = ip;
-
-        if (isFreezeMode)
-        {
+        if (mode is LiquifiedMode.Freeze or LiquifiedMode.Unfreeze)
           PaintFreezeMaskAtPoint(ip, currentStroke.BrushSize, mode == LiquifiedMode.Freeze);
-        }
-        else
-        {
-          ApplyBrushAt(ip, currentStroke);
-        }
+        rateTimer.Interval = Math.Max(8, 1000 / rateSlider.Value);
+        rateTimer.Start();
+        RequestPreview();
       }
     }
     else if (e.Button == MouseButtons.Right)
@@ -509,6 +811,8 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   private void Canvas_MouseMove(object? sender, MouseEventArgs e)
   {
+    if (pointerCaptureActive && ReferenceEquals(sender, canvas))
+      return;
     if (isDrawing && e.Button == MouseButtons.Left && currentStroke != null && origSurface != null)
     {
       var ip = ScreenToImage(e.Location);
@@ -518,18 +822,10 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         float dy = ip.Y - lastBrushPt.Y;
         if (dx * dx + dy * dy >= 4f)
         {
-          bool isFreezeMode = currentStroke.Mode == LiquifiedMode.Freeze || currentStroke.Mode == LiquifiedMode.Unfreeze;
-
-          if (isFreezeMode)
-          {
-            currentStroke.Points.Add(new[] { ip.X, ip.Y });
+          currentStroke.Points.Add(new[] { ip.X, ip.Y, penPressureCheck.Checked ? lastPointerPressure : 1f, dx, dy });
+          if (currentStroke.Mode is LiquifiedMode.Freeze or LiquifiedMode.Unfreeze)
             PaintFreezeMaskAtPoint(ip, currentStroke.BrushSize, currentStroke.Mode == LiquifiedMode.Freeze);
-          }
-          else if (!IsPointFrozen(ip))
-          {
-            currentStroke.Points.Add(new[] { ip.X, ip.Y });
-            ApplyBrushAt(ip, currentStroke);
-          }
+          RequestPreview();
 
           lastBrushPt = ip;
         }
@@ -551,9 +847,12 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   private void Canvas_MouseUp(object? sender, MouseEventArgs e)
   {
+    if (pointerCaptureActive && ReferenceEquals(sender, canvas))
+      return;
     if (isDrawing && e.Button == MouseButtons.Left)
     {
       isDrawing = false;
+      rateTimer.Stop();
       if (currentStroke != null && currentStroke.Points.Count > 0)
       {
         strokes.Add(currentStroke);
@@ -562,8 +861,8 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         PushUpdate();
       }
       currentStroke = null;
-      snapSurface?.Dispose();
-      snapSurface = null;
+      RegeneratePreview();
+      UpdateStatus(e.Location);
     }
     else if (isPanning && e.Button == MouseButtons.Right)
     {
@@ -583,6 +882,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         pan.X + (after.X - before.X) * zoom,
         pan.Y + (after.Y - before.Y) * zoom);
     canvas.Invalidate();
+    UpdateStatus(e.Location);
   }
 
   private void InvalidateCursorArea(Point newPos)
@@ -602,9 +902,11 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   private void Undo()
   {
-    if (strokes.Count == 0) return;
-    redoStack.Add(strokes[^1]);
-    strokes.RemoveAt(strokes.Count - 1);
+    FinishCurrentStroke();
+    if (undoStack.Count == 0) return;
+    redoStack.Add(CaptureHistory());
+    RestoreHistory(undoStack[^1]);
+    undoStack.RemoveAt(undoStack.Count - 1);
     RegeneratePreview();
     UpdateButtons();
     PushUpdate();
@@ -612,8 +914,10 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   private void Redo()
   {
+    FinishCurrentStroke();
     if (redoStack.Count == 0) return;
-    strokes.Add(redoStack[^1]);
+    AddUndoState(CaptureHistory());
+    RestoreHistory(redoStack[^1]);
     redoStack.RemoveAt(redoStack.Count - 1);
     RegeneratePreview();
     UpdateButtons();
@@ -622,315 +926,364 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   private void ResetStrokes()
   {
-    strokes.Clear();
-    redoStack.Clear();
-    ClearFreezeMask();
+    FinishCurrentStroke();
+    RecordUndo();
+    strokes.Add(new BrushStroke { Action = LiquifiedHistoryAction.RestoreAll });
+    suppressUiEvents = true;
+    reconstructSlider.Value = reconstructSlider.Minimum;
+    previousReconstruction = reconstructSlider.Value;
+    suppressUiEvents = false;
     RegeneratePreview();
     UpdateButtons();
     PushUpdate();
+  }
+
+  private HistoryState CaptureHistory()
+  {
+    if (redoStack.Count == 0)
+    {
+      if (historyStrokeArchive.Count > strokes.Count)
+        historyStrokeArchive.RemoveRange(strokes.Count, historyStrokeArchive.Count - strokes.Count);
+      for (int i = historyStrokeArchive.Count; i < strokes.Count; i++)
+        historyStrokeArchive.Add(strokes[i]);
+    }
+    return new(strokes.Count, freezeMaskBaseline, reconstructSlider.Value);
+  }
+
+  private void AddUndoState(HistoryState state)
+  {
+    if (undoStack.Count == MaximumUndoSteps)
+      undoStack.RemoveAt(0);
+    undoStack.Add(state);
+  }
+
+  private void RecordUndo()
+  {
+    AddUndoState(CaptureHistory());
+    redoStack.Clear();
+    if (historyStrokeArchive.Count > strokes.Count)
+      historyStrokeArchive.RemoveRange(strokes.Count, historyStrokeArchive.Count - strokes.Count);
+  }
+
+  private void RestoreHistory(HistoryState state)
+  {
+    strokes.Clear();
+    for (int i = 0; i < state.StrokeCount; i++)
+      strokes.Add(historyStrokeArchive[i]);
+    freezeMaskBaseline = state.InitialMask;
+    suppressUiEvents = true;
+    reconstructSlider.Value = state.Reconstruction;
+    previousReconstruction = state.Reconstruction;
+    suppressUiEvents = false;
+  }
+
+  private void FinishCurrentStroke()
+  {
+    if (currentStroke is not null)
+    {
+      strokes.Add(currentStroke);
+      currentStroke = null;
+    }
+    isDrawing = false;
+    rateTimer.Stop();
   }
 
   // ═════════════════════════════════════════════════════════
   //  CPU Preview Rendering
   // ═════════════════════════════════════════════════════════
 
-  private void ApplyBrushAt(PointF center, BrushStroke stroke)
-  {
-    if (workSurface == null) return;
-
-    float radius = Math.Max(1f, stroke.BrushSize * 0.5f);
-    float r2 = radius * radius;
-    float invR = 1f / radius;
-    float baseStr = (float)stroke.Strength;
-    float baseDensity = (float)stroke.Density;
-    var src = snapSurface ?? workSurface;
-
-    int left = Math.Max(0, (int)(center.X - radius));
-    int top = Math.Max(0, (int)(center.Y - radius));
-    int right = Math.Min(workSurface.Width, (int)(center.X + radius) + 1);
-    int bottom = Math.Min(workSurface.Height, (int)(center.Y + radius) + 1);
-
-    for (int py = top; py < bottom; py++)
-    {
-      float dy = py - center.Y;
-      for (int px = left; px < right; px++)
-      {
-        if (freezeMask.Length != 0 && freezeMask[py * workSurface.Width + px])
-        {
-          continue;
-        }
-
-        float dx = px - center.X;
-        float d2 = dx * dx + dy * dy;
-        if (d2 > r2 || d2 < 0.0001f) continue;
-
-        float dist = MathF.Sqrt(d2);
-        float t = 1f - dist * invR;
-        float falloff = t * t * (3f - 2f * t);
-        falloff = MathF.Pow(MathF.Abs(falloff), 2f - baseDensity);
-        float eff = baseStr * falloff;
-
-        var srcPos = CalcSourcePos(px, py, center, stroke.Mode, eff, dist, dx, dy);
-        var sampled = SampleBilinear(src, srcPos.X, srcPos.Y);
-        workSurface[px, py] = sampled;
-      }
-    }
-
-    // Invalidate the affected screen region
-    if (!suppressFreezeInvalidate)
-    {
-      var screenRect = ImageToScreen(new RectangleF(left, top, right - left, bottom - top));
-      screenRect.Inflate(2, 2);
-      canvas.Invalidate(screenRect);
-    }
-  }
-
-  private void RegeneratePreview()
+  private async void RegeneratePreview()
   {
     if (origSurface == null || workSurface == null) return;
-
-    CopySurface(origSurface, workSurface);
-    RebuildFreezeMaskFromStrokes();
-
-    // Flatten all stroke points with precomputed parameters, preserving stroke order.
-    var allPoints = new List<(float cx, float cy, float radius, float strength, float density, LiquifiedMode mode)>();
-    float globalLeft = float.MaxValue, globalTop = float.MaxValue;
-    float globalRight = float.MinValue, globalBottom = float.MinValue;
-
-    foreach (var stroke in strokes)
+    if (previewRunning)
     {
-      float radius = Math.Max(1f, stroke.BrushSize * 0.5f);
-      foreach (var pt in stroke.Points)
-      {
-        if (pt.Length < 2) continue;
-        allPoints.Add((pt[0], pt[1], radius, (float)stroke.Strength, (float)stroke.Density, stroke.Mode));
-        globalLeft = Math.Min(globalLeft, pt[0] - radius);
-        globalTop = Math.Min(globalTop, pt[1] - radius);
-        globalRight = Math.Max(globalRight, pt[0] + radius);
-        globalBottom = Math.Max(globalBottom, pt[1] + radius);
-      }
-    }
-
-    if (allPoints.Count == 0)
-    {
-      canvas?.Invalidate();
+      previewPending = true;
       return;
     }
+    previewRunning = true;
+    previewPending = false;
 
-    // Per-pixel displacement accumulation, with Freeze/Unfreeze respected in stroke order.
-    int w = workSurface.Width, h = workSurface.Height;
-    int left = Math.Max(0, (int)globalLeft);
-    int top = Math.Max(0, (int)globalTop);
-    int right = Math.Min(w, (int)globalRight + 1);
-    int bottom = Math.Min(h, (int)globalBottom + 1);
-
-    for (int py = top; py < bottom; py++)
+    RebuildFreezeMaskFromStrokes();
+    List<BrushStroke> previewStrokes = new(strokes);
+    List<BrushStroke> historyIdentities = new(strokes);
+    if (currentStroke is not null)
     {
-      for (int px = left; px < right; px++)
+      previewStrokes.Add(CloneStroke(currentStroke));
+      historyIdentities.Add(currentStroke);
+    }
+
+    bool[] maskSnapshot = freezeMaskBaseline;
+    byte[] selectionSnapshot = selectionCoverage;
+    int generation = Interlocked.Increment(ref previewGeneration);
+    CancellationTokenSource cancellation = new();
+    CancellationTokenSource? previous = Interlocked.Exchange(ref previewCancellation, cancellation);
+    previous?.Cancel();
+
+    try
+    {
+      int width = origSurface.Width;
+      int height = origSurface.Height;
+      double reconstructAmount = reconstructSlider.Value / 100.0;
+      int rate = rateSlider.Value;
+      int quality = qualitySlider.Value;
+      Surface source = origSurface;
+      (ColorBgra[] Pixels, float[] Map) result = await Task.Run(() =>
       {
-        bool frozen = false;
-        float posX = px;
-        float posY = py;
-        float origX = px;
-        float origY = py;
-
-        foreach (var sp in allPoints)
+        lock (previewSurfaceLock)
         {
-          float maskDx = px - sp.cx;
-          float maskDy = py - sp.cy;
-          float maskDist2 = maskDx * maskDx + maskDy * maskDy;
-          float r2 = sp.radius * sp.radius;
-          if (maskDist2 > r2 || maskDist2 < 1e-6f)
+          CancellationToken token = cancellation.Token;
+          bool cacheValid = cachedSampleMap != null && cachedFreezeMask != null &&
+            ReferenceEquals(cachedInitialMask, maskSnapshot) &&
+            cachedHistory.Count <= historyIdentities.Count;
+          if (cacheValid)
           {
-            continue;
-          }
-
-          if (sp.mode == LiquifiedMode.Freeze)
-          {
-            frozen = true;
-            continue;
-          }
-
-          if (sp.mode == LiquifiedMode.Unfreeze)
-          {
-            frozen = false;
-            continue;
-          }
-
-          if (frozen)
-          {
-            continue;
-          }
-
-          float dx = posX - sp.cx;
-          float dy = posY - sp.cy;
-          float d2 = dx * dx + dy * dy;
-          if (d2 > r2 || d2 < 1e-6f)
-          {
-            continue;
-          }
-
-          float dist = MathF.Sqrt(d2);
-          float invR = 1f / sp.radius;
-          float t = 1f - dist * invR;
-          float falloff = t * t * (3f - 2f * t);
-          falloff = MathF.Pow(MathF.Abs(falloff), 2f - sp.density);
-          float eff = sp.strength * falloff;
-          float invDist = 1f / dist;
-
-          switch (sp.mode)
-          {
-            case LiquifiedMode.ForwardWarp:
-              posX -= dx * invDist * eff * 20f;
-              posY -= dy * invDist * eff * 20f;
-              break;
-            case LiquifiedMode.Pucker:
-              posX += dx * invDist * eff * 15f;
-              posY += dy * invDist * eff * 15f;
-              break;
-            case LiquifiedMode.Bloat:
-              posX -= dx * invDist * eff * 25f;
-              posY -= dy * invDist * eff * 25f;
-              break;
-            case LiquifiedMode.TwistCW:
+            for (int i = 0; i < cachedHistory.Count; i++)
+            {
+              if (!ReferenceEquals(cachedHistory[i], historyIdentities[i]) ||
+                  cachedPointCounts[i] > previewStrokes[i].Points.Count)
               {
-                float a = eff * 0.5f;
-                float cos = MathF.Cos(a), sin = MathF.Sin(a);
-                posX = sp.cx + dx * cos - dy * sin;
-                posY = sp.cy + dx * sin + dy * cos;
+                cacheValid = false;
                 break;
               }
-            case LiquifiedMode.TwistCCW:
-              {
-                float a = -eff * 0.5f;
-                float cos = MathF.Cos(a), sin = MathF.Sin(a);
-                posX = sp.cx + dx * cos - dy * sin;
-                posY = sp.cy + dx * sin + dy * cos;
-                break;
-              }
-            case LiquifiedMode.PushLeft:
-              posX += dy * invDist * eff * 20f;
-              posY -= dx * invDist * eff * 20f;
-              break;
-            case LiquifiedMode.Reconstruct:
-              posX += (origX - posX) * eff;
-              posY += (origY - posY) * eff;
-              break;
-            case LiquifiedMode.Turbulence:
-              {
-                float hash1 = MathF.Abs(MathF.Sin(posX * 12.9898f + posY * 78.233f) * 43758.5453f) % 1f;
-                float hash2 = MathF.Abs(MathF.Sin(posX * 39.346f + posY * 11.135f) * 43758.5453f) % 1f;
-                posX += (hash1 - 0.5f) * eff * 15f;
-                posY += (hash2 - 0.5f) * eff * 15f;
-                break;
-              }
-            case LiquifiedMode.Freeze:
-            case LiquifiedMode.Unfreeze:
-              break;
+            }
           }
+
+          List<BrushStroke> pending = new();
+          if (cacheValid)
+          {
+            for (int i = 0; i < previewStrokes.Count; i++)
+            {
+              BrushStroke stroke = previewStrokes[i];
+              if (i >= cachedHistory.Count)
+                pending.Add(stroke);
+              else if (cachedPointCounts[i] < stroke.Points.Count)
+              {
+                BrushStroke tail = new()
+                {
+                  Action = stroke.Action,
+                  Mode = stroke.Mode,
+                  BrushSize = stroke.BrushSize,
+                  Strength = stroke.Strength,
+                  Density = stroke.Density,
+                  Points = stroke.Points.GetRange(cachedPointCounts[i], stroke.Points.Count - cachedPointCounts[i])
+                };
+                pending.Add(tail);
+              }
+            }
+          }
+          float[] map;
+          bool[] maskWorkspace;
+          if (cacheValid && pending.Count == 0)
+          {
+            map = cachedSampleMap!;
+            maskWorkspace = cachedFreezeMask!;
+          }
+          else
+          {
+            // Map and mask must start at the same cached history boundary.
+            maskWorkspace = new bool[checked(width * height)];
+            map = LiquifiedDeformation.BuildSampleMap(
+              width, height, cacheValid ? pending : previewStrokes, 0, rate, quality,
+              cacheValid ? cachedFreezeMask : maskSnapshot, token,
+              initialSampleMap: cacheValid ? cachedSampleMap : null,
+              maskWorkspace: maskWorkspace);
+          }
+          cachedSampleMap = map;
+          cachedFreezeMask = maskWorkspace;
+          cachedInitialMask = maskSnapshot;
+          cachedHistory = historyIdentities;
+          cachedPointCounts = new List<int>(previewStrokes.Count);
+          foreach (BrushStroke stroke in previewStrokes)
+            cachedPointCounts.Add(stroke.Points.Count);
+          if (reconstructAmount > 0)
+          {
+            map = (float[])map.Clone();
+            LiquifiedDeformation.ApplyGlobalReconstruction(map, maskWorkspace, width, height, (float)reconstructAmount, token);
+          }
+          ColorBgra[] result = new ColorBgra[checked(width * height)];
+          for (int y = 0; y < height; y++)
+          {
+            token.ThrowIfCancellationRequested();
+            int row = y * width;
+            for (int x = 0; x < width; x++)
+            {
+              int mapOffset = (row + x) * 2;
+              ColorBgra sampled = SampleBilinear(source, map[mapOffset], map[mapOffset + 1]);
+              byte coverage = selectionSnapshot.Length == maskSnapshot.Length
+                ? selectionSnapshot[row + x]
+                : byte.MaxValue;
+              result[row + x] = ColorBgra.Lerp(source[x, y], sampled, coverage / 255f);
+            }
+          }
+          return (result, map);
         }
+      }, cancellation.Token);
 
-        workSurface[px, py] = SampleBilinear(origSurface, posX, posY);
+      if (IsDisposed || Disposing || generation != Volatile.Read(ref previewGeneration))
+        return;
+      unsafe
+      {
+        fixed (ColorBgra* sourcePixels = result.Pixels)
+        {
+          byte* destination = (byte*)workSurface.Scan0.VoidStar;
+          int rowBytes = checked(width * sizeof(ColorBgra));
+          for (int y = 0; y < height; y++)
+            Buffer.MemoryCopy(sourcePixels + y * width, destination + y * workSurface.Stride,
+              workSurface.Stride, rowBytes);
+        }
+        displayedMap = result.Map;
+        previewError = null;
       }
+      if (showBackdropCheck.Checked)
+        RefreshCompositedBackdrop();
+    }
+    catch (OperationCanceledException)
+    {
+    }
+    catch (Exception ex)
+    {
+      cachedSampleMap = null;
+      cachedFreezeMask = null;
+      cachedHistory.Clear();
+      cachedPointCounts.Clear();
+      if (!IsDisposed && generation == Volatile.Read(ref previewGeneration))
+        previewError = $"Preview error: {ex.Message}";
+    }
+    finally
+    {
+      Interlocked.CompareExchange(ref previewCancellation, null, cancellation);
+      cancellation.Dispose();
+      previewRunning = false;
+      if (previewPending && !IsDisposed && !Disposing)
+        previewTimer.Start();
     }
 
     canvas?.Invalidate();
+    UpdateStatus(lastCursorPos);
   }
 
-  private void ApplyBrushStrokePoint(PointF center, BrushStroke stroke)
+  private void RefreshCompositedBackdrop()
   {
-    if (workSurface == null || origSurface == null) return;
-
-    float radius = Math.Max(1f, stroke.BrushSize * 0.5f);
-    float r2 = radius * radius;
-    float invR = 1f / radius;
-    float baseStr = (float)stroke.Strength;
-    float baseDensity = (float)stroke.Density;
-
-    int left = Math.Max(0, (int)(center.X - radius));
-    int top = Math.Max(0, (int)(center.Y - radius));
-    int right = Math.Min(workSurface.Width, (int)(center.X + radius) + 1);
-    int bottom = Math.Min(workSurface.Height, (int)(center.Y + radius) + 1);
-
-    for (int py = top; py < bottom; py++)
+    if (workSurface == null || backdropSurface == null)
+      return;
+    using var previewSource = workSurface.CreateSharedBitmap();
+    using var previewEnvironment = Environment.CloneWithNewSource(previewSource);
+    using var compositeBitmap = previewEnvironment.Document.GetBitmapBgra32();
+    unsafe
     {
-      float dy = py - center.Y;
-      for (int px = left; px < right; px++)
+      compositeBitmap.CopyPixels(backdropSurface.Scan0.VoidStar, backdropSurface.Stride,
+          (uint)backdropSurface.Scan0.Length, null);
+    }
+  }
+
+  private void RequestPreview()
+  {
+    previewPending = true;
+    if (!previewTimer.Enabled && !previewRunning)
+      previewTimer.Start();
+  }
+
+  private void ApplyRateTick()
+  {
+    if (!isDrawing || currentStroke == null || origSurface == null)
+      return;
+    if (currentStroke.Mode == LiquifiedMode.ForwardWarp)
+      return;
+    currentStroke.Points.Add(new[] { lastBrushPt.X, lastBrushPt.Y, penPressureCheck.Checked ? lastPointerPressure : 1f, 0f, 0f });
+    if (currentStroke.Mode is LiquifiedMode.Freeze or LiquifiedMode.Unfreeze)
+      PaintFreezeMaskAtPoint(lastBrushPt, currentStroke.BrushSize, currentStroke.Mode == LiquifiedMode.Freeze);
+    RequestPreview();
+  }
+
+  private void NudgeBrush(Keys key, float distance)
+  {
+    if (ActiveControl is TrackBar)
+      return;
+    if (key == Keys.Left) distance = -distance;
+    else if (key == Keys.Up) distance = -distance;
+    else distance = Math.Abs(distance);
+
+    if (Control.ModifierKeys.HasFlag(Keys.Control))
+    {
+      float dx = key == Keys.Left ? distance : key == Keys.Right ? distance : 0;
+      float dy = key == Keys.Up ? distance : key == Keys.Down ? distance : 0;
+      pan = new PointF(pan.X - dx * 8, pan.Y - dy * 8);
+      canvas.Invalidate();
+      return;
+    }
+
+    if (lastCursorPos == Point.Empty)
+      lastCursorPos = new Point(canvas.ClientSize.Width / 2, canvas.ClientSize.Height / 2);
+    Point offset = key switch
+    {
+      Keys.Left => new Point(-(int)Math.Abs(distance), 0),
+      Keys.Right => new Point((int)Math.Abs(distance), 0),
+      Keys.Up => new Point(0, -(int)Math.Abs(distance)),
+      _ => new Point(0, (int)Math.Abs(distance))
+    };
+    lastCursorPos = new Point(lastCursorPos.X + offset.X, lastCursorPos.Y + offset.Y);
+    canvas.Invalidate();
+
+    if (origSurface == null || !canvas.ClientRectangle.Contains(lastCursorPos))
+      return;
+    PointF imagePoint = ScreenToImage(lastCursorPos);
+    if (imagePoint.X < 0 || imagePoint.Y < 0 ||
+        imagePoint.X >= origSurface.Width || imagePoint.Y >= origSurface.Height)
+      return;
+
+    var stroke = new BrushStroke
+    {
+      Mode = selectedMode,
+      BrushSize = brushSizeSlider.Value,
+      Strength = strengthSlider.Value / 100.0,
+      Density = densitySlider.Value / 100.0
+    };
+    FinishCurrentStroke();
+    RecordUndo();
+    stroke.Points.Add(new[] { imagePoint.X, imagePoint.Y, 1f, offset.X / zoom, offset.Y / zoom });
+    strokes.Add(stroke);
+    if (selectedMode is LiquifiedMode.Freeze or LiquifiedMode.Unfreeze)
+    {
+      PaintFreezeMaskAtPoint(imagePoint, stroke.BrushSize, selectedMode == LiquifiedMode.Freeze);
+    }
+    redoStack.Clear();
+    RegeneratePreview();
+    UpdateButtons();
+    PushUpdate();
+  }
+
+  private void HandlePenPointer(Point location, float pressure, int phase, bool hasPressure)
+  {
+    penPressureAvailable = hasPressure;
+    if (phase == 0)
+    {
+      lastPointerPressure = pressure;
+      Canvas_MouseDown(null, new MouseEventArgs(MouseButtons.Left, 1, location.X, location.Y, 0));
+      pointerCaptureActive = true;
+      if (currentStroke is { Points.Count: > 0 })
+        currentStroke.Points[^1][2] = penPressureCheck.Checked ? pressure : 1f;
+      return;
+    }
+
+    if (phase == 1)
+    {
+      lastPointerPressure = pressure;
+      if (isDrawing && currentStroke != null)
       {
-        float dx = px - center.X;
-        float d2 = dx * dx + dy * dy;
-        if (d2 > r2 || d2 < 0.0001f) continue;
-
-        float dist = MathF.Sqrt(d2);
-        float t = 1f - dist * invR;
-        float falloff = t * t * (3f - 2f * t);
-        falloff = MathF.Pow(MathF.Abs(falloff), 2f - baseDensity);
-        float eff = baseStr * falloff;
-
-        var srcPos = CalcSourcePos(px, py, center, stroke.Mode, eff, dist, dx, dy);
-        var sampled = SampleBilinear(origSurface, srcPos.X, srcPos.Y);
-        float blend = Math.Min(0.8f, eff);
-        workSurface[px, py] = ColorBgra.Lerp(workSurface[px, py], sampled, blend);
+        int oldCount = currentStroke.Points.Count;
+        Canvas_MouseMove(null, new MouseEventArgs(MouseButtons.Left, 0, location.X, location.Y, 0));
+        if (currentStroke.Points.Count > oldCount)
+        {
+          float scale = penPressureCheck.Checked ? pressure : 1f;
+          currentStroke.Points[^1][2] = scale;
+        }
       }
-    }
-  }
-
-  private static PointF CalcSourcePos(float x, float y, PointF center, LiquifiedMode mode,
-      float eff, float dist, float dx, float dy)
-  {
-    float invDist = 1f / dist;
-    float sx = x, sy = y;
-
-    switch (mode)
-    {
-      case LiquifiedMode.ForwardWarp:
-        sx -= dx * invDist * eff * 20f;
-        sy -= dy * invDist * eff * 20f;
-        break;
-      case LiquifiedMode.Pucker:
-        sx += dx * invDist * eff * 15f;
-        sy += dy * invDist * eff * 15f;
-        break;
-      case LiquifiedMode.Bloat:
-        sx -= dx * invDist * eff * 25f;
-        sy -= dy * invDist * eff * 25f;
-        break;
-      case LiquifiedMode.TwistCW:
-        {
-          float a = eff * 0.5f;
-          float cos = MathF.Cos(a), sin = MathF.Sin(a);
-          sx = center.X + dx * cos - dy * sin;
-          sy = center.Y + dx * sin + dy * cos;
-          break;
-        }
-      case LiquifiedMode.TwistCCW:
-        {
-          float a = -eff * 0.5f;
-          float cos = MathF.Cos(a), sin = MathF.Sin(a);
-          sx = center.X + dx * cos - dy * sin;
-          sy = center.Y + dx * sin + dy * cos;
-          break;
-        }
-      case LiquifiedMode.PushLeft:
-        sx += dy * invDist * eff * 20f;
-        sy -= dx * invDist * eff * 20f;
-        break;
-      case LiquifiedMode.Reconstruct:
-        break;
-      case LiquifiedMode.Turbulence:
-        {
-          float hash1 = MathF.Abs(MathF.Sin(dx * 12.9898f + dy * 78.233f) * 43758.5453f) % 1f;
-          float hash2 = MathF.Abs(MathF.Sin(dx * 39.346f + dy * 11.135f) * 43758.5453f) % 1f;
-          sx += (hash1 - 0.5f) * eff * 15f;
-          sy += (hash2 - 0.5f) * eff * 15f;
-          break;
-        }
-      case LiquifiedMode.Freeze:
-      case LiquifiedMode.Unfreeze:
-        break;
+      return;
     }
 
-    return new PointF(sx, sy);
+    pointerCaptureActive = false;
+    if (isDrawing)
+      Canvas_MouseUp(null, new MouseEventArgs(MouseButtons.Left, 1, location.X, location.Y, 0));
   }
 
   private static ColorBgra SampleBilinear(Surface sfc, float x, float y)
@@ -947,55 +1300,25 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         fy);
   }
 
-  private static void CopySurface(Surface src, Surface dst)
-  {
-    for (int y = 0; y < src.Height && y < dst.Height; y++)
-    {
-      for (int x = 0; x < src.Width && x < dst.Width; x++)
-      {
-        dst[x, y] = src[x, y];
-      }
-    }
-  }
-
-  private bool IsPointFrozen(PointF point)
-  {
-    if (origSurface == null || freezeMask.Length == 0)
-      return false;
-
-    int x = Math.Clamp((int)point.X, 0, origSurface.Width - 1);
-    int y = Math.Clamp((int)point.Y, 0, origSurface.Height - 1);
-    return freezeMask[y * origSurface.Width + x];
-  }
-
   private void ClearFreezeMask()
   {
     if (origSurface == null)
       return;
 
-    int pixelCount = origSurface.Width * origSurface.Height;
+    int pixelCount = checked(origSurface.Width * origSurface.Height);
     if (freezeMask.Length != pixelCount)
       freezeMask = new bool[pixelCount];
     else
       Array.Clear(freezeMask, 0, freezeMask.Length);
+    freezeMaskBaseline = new bool[pixelCount];
 
     frozenPixelCount = 0;
-
-    freezeOverlaySurface?.Dispose();
-    freezeOverlaySurface = new Surface(origSurface.Width, origSurface.Height);
-
-    for (int y = 0; y < freezeOverlaySurface.Height; y++)
-    {
-      for (int x = 0; x < freezeOverlaySurface.Width; x++)
-      {
-        freezeOverlaySurface[x, y] = TransparentOverlayColor;
-      }
-    }
+    canvas?.Invalidate();
   }
 
   private void PaintFreezeMaskAtPoint(PointF center, int brushSize, bool freeze)
   {
-    if (origSurface == null || freezeOverlaySurface == null || freezeMask.Length == 0)
+    if (origSurface == null || freezeMask.Length == 0)
       return;
 
     float radius = Math.Max(1f, brushSize * 0.5f);
@@ -1021,7 +1344,6 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
         freezeMask[idx] = freeze;
         frozenPixelCount += freeze ? 1 : -1;
-        freezeOverlaySurface[px, py] = freeze ? FreezeOverlayColor : TransparentOverlayColor;
       }
     }
 
@@ -1035,10 +1357,34 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     if (origSurface == null)
       return;
 
-    ClearFreezeMask();
+    int pixelCount = checked(origSurface.Width * origSurface.Height);
+    if (freezeMask.Length != pixelCount)
+      freezeMask = new bool[pixelCount];
+    if (freezeMaskBaseline.Length != pixelCount)
+      freezeMaskBaseline = new bool[pixelCount];
+    Array.Copy(freezeMaskBaseline, freezeMask, pixelCount);
+    frozenPixelCount = CountFrozenPixels(freezeMask);
 
     foreach (var stroke in strokes)
     {
+      if (stroke.Action != LiquifiedHistoryAction.Brush)
+      {
+        switch (stroke.Action)
+        {
+          case LiquifiedHistoryAction.MaskNone:
+            Array.Clear(freezeMask);
+            break;
+          case LiquifiedHistoryAction.MaskAll:
+            Array.Fill(freezeMask, true);
+            break;
+          case LiquifiedHistoryAction.MaskInvert:
+            for (int i = 0; i < freezeMask.Length; i++)
+              freezeMask[i] = !freezeMask[i];
+            break;
+        }
+        frozenPixelCount = CountFrozenPixels(freezeMask);
+        continue;
+      }
       if (stroke.Mode != LiquifiedMode.Freeze && stroke.Mode != LiquifiedMode.Unfreeze)
         continue;
 
@@ -1051,8 +1397,42 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         PaintFreezeMaskAtPoint(new PointF(pt[0], pt[1]), stroke.BrushSize, freeze);
       }
     }
+    if (currentStroke is { Mode: LiquifiedMode.Freeze or LiquifiedMode.Unfreeze })
+    {
+      bool freeze = currentStroke.Mode == LiquifiedMode.Freeze;
+      foreach (float[] point in currentStroke.Points)
+        if (point.Length >= 2)
+          PaintFreezeMaskAtPoint(new PointF(point[0], point[1]), currentStroke.BrushSize, freeze);
+    }
+  }
 
-    suppressFreezeInvalidate = false;
+  private static int CountFrozenPixels(bool[] mask)
+  {
+    int count = 0;
+    foreach (bool frozen in mask)
+      if (frozen) count++;
+    return count;
+  }
+
+  private void SetMask(LiquifiedMaskOperation operation)
+  {
+    if (origSurface == null)
+      return;
+    FinishCurrentStroke();
+    RecordUndo();
+    strokes.Add(new BrushStroke
+    {
+      Action = operation switch
+      {
+        LiquifiedMaskOperation.None => LiquifiedHistoryAction.MaskNone,
+        LiquifiedMaskOperation.All => LiquifiedHistoryAction.MaskAll,
+        LiquifiedMaskOperation.Invert => LiquifiedHistoryAction.MaskInvert,
+        _ => throw new ArgumentOutOfRangeException(nameof(operation))
+      }
+    });
+    RegeneratePreview();
+    UpdateButtons();
+    PushUpdate();
   }
 
   // ═════════════════════════════════════════════════════════
@@ -1107,21 +1487,34 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   private void SyncUIFromToken(LiquifiedConfigToken token)
   {
-    SetSelectedMode(token.Mode, pushUpdate: false);
-    brushSizeSlider.Value = Math.Clamp(token.BrushSize, brushSizeSlider.Minimum, brushSizeSlider.Maximum);
-    strengthSlider.Value = Math.Clamp((int)(token.Strength * 100), strengthSlider.Minimum, strengthSlider.Maximum);
-    densitySlider.Value = Math.Clamp((int)(token.Density * 100), densitySlider.Minimum, densitySlider.Maximum);
-    qualitySlider.Value = Math.Clamp(token.Quality, qualitySlider.Minimum, qualitySlider.Maximum);
-    brushSizeValue.Text = $"{brushSizeSlider.Value} px";
-    strengthValue.Text = $"{strengthSlider.Value}%";
-    densityValue.Text = $"{densitySlider.Value}%";
-    qualityValue.Text = $"{qualitySlider.Value}x";
-    UpdateButtons();
+    suppressUiEvents = true;
+    try
+    {
+      SetSelectedMode(Enum.IsDefined(token.Mode) ? token.Mode : LiquifiedMode.ForwardWarp, pushUpdate: false);
+      brushSizeSlider.Value = Math.Clamp(token.BrushSize, brushSizeSlider.Minimum, brushSizeSlider.Maximum);
+      strengthSlider.Value = Math.Clamp((int)(token.Strength * 100), strengthSlider.Minimum, strengthSlider.Maximum);
+      densitySlider.Value = Math.Clamp((int)(token.Density * 100), densitySlider.Minimum, densitySlider.Maximum);
+      rateSlider.Value = Math.Clamp(token.Rate, rateSlider.Minimum, rateSlider.Maximum);
+      reconstructSlider.Value = Math.Clamp((int)(token.ReconstructAmount * 100), reconstructSlider.Minimum, reconstructSlider.Maximum);
+      qualitySlider.Value = Math.Clamp(token.Quality, qualitySlider.Minimum, qualitySlider.Maximum);
+      brushSizeValue.Text = $"{brushSizeSlider.Value} px";
+      strengthValue.Text = $"{strengthSlider.Value}%";
+      densityValue.Text = $"{densitySlider.Value}%";
+      rateValue.Text = $"{rateSlider.Value}/s";
+      reconstructValue.Text = $"{reconstructSlider.Value}%";
+      previousReconstruction = reconstructSlider.Value;
+      qualityValue.Text = $"{qualitySlider.Value}x";
+      UpdateButtons();
+    }
+    finally
+    {
+      suppressUiEvents = false;
+    }
   }
 
   private void UpdateButtons()
   {
-    if (undoBtn != null) undoBtn.Enabled = strokes.Count > 0;
+    if (undoBtn != null) undoBtn.Enabled = undoStack.Count > 0;
     if (redoBtn != null) redoBtn.Enabled = redoStack.Count > 0;
   }
 
@@ -1133,6 +1526,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   {
     var clone = new BrushStroke
     {
+      Action = s.Action,
       Mode = s.Mode,
       BrushSize = s.BrushSize,
       Strength = s.Strength,
@@ -1150,13 +1544,14 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     {
       Text = text,
       AutoSize = true,
-      ForeColor = LabelColor,
+      ForeColor = SystemInformation.HighContrast ? SystemColors.ControlText : LabelColor,
       Margin = new Padding(0, S(2), 0, S(2))
     };
   }
 
   private Button MakeButton(string text)
   {
+    bool highContrast = SystemInformation.HighContrast;
     return new Button
     {
       Text = text,
@@ -1164,10 +1559,26 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       AutoSizeMode = AutoSizeMode.GrowAndShrink,
       MinimumSize = new Size(S(60), S(28)),
       FlatStyle = FlatStyle.Flat,
-      BackColor = ControlBg,
-      ForeColor = LabelColor,
+      BackColor = highContrast ? SystemColors.Control : ControlBg,
+      ForeColor = highContrast ? SystemColors.ControlText : LabelColor,
       Padding = new Padding(S(8), S(2), S(8), S(2)),
       Margin = new Padding(0, 0, S(4), 0)
+    };
+  }
+
+  private CheckBox MakeCheckBox(string text, bool isChecked = false)
+  {
+    bool highContrast = SystemInformation.HighContrast;
+    return new CheckBox
+    {
+      Text = text,
+      Checked = isChecked,
+      AutoSize = true,
+      ForeColor = highContrast ? SystemColors.ControlText : LabelColor,
+      BackColor = highContrast ? SystemColors.Control : Color.Transparent,
+      Margin = new Padding(0, S(2), 0, S(2)),
+      AccessibleName = text,
+      AccessibleRole = AccessibleRole.CheckButton
     };
   }
 
@@ -1176,6 +1587,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     Button btn = MakeButton(icon);
     btn.MinimumSize = new Size(S(34), S(30));
     btn.Padding = new Padding(S(6), S(2), S(6), S(2));
+    btn.AccessibleName = tooltip;
     uiToolTip.SetToolTip(btn, tooltip);
     return btn;
   }
@@ -1198,12 +1610,17 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         Width = btnW,
         Height = btnH,
         FlatStyle = FlatStyle.Flat,
-        BackColor = ControlBg,
-        ForeColor = LabelColor,
+        BackColor = SystemInformation.HighContrast ? SystemColors.Control : ControlBg,
+        ForeColor = SystemInformation.HighContrast ? SystemColors.ControlText : LabelColor,
         Margin = new Padding(0, 0, S(4), S(4)),
-        Image = CreateModeIcon(entry.Mode, iconSize, LabelColor),
+        Image = CreateModeIcon(entry.Mode, iconSize,
+          SystemInformation.HighContrast ? SystemColors.ControlText : LabelColor),
         ImageAlign = ContentAlignment.MiddleCenter
       };
+      button.AccessibleRole = AccessibleRole.PushButton;
+      button.AccessibleName = entry.Name;
+      button.AccessibleDescription = GetModeDescription((int)entry.Mode);
+      button.TabStop = true;
       button.FlatAppearance.BorderColor = Color.FromArgb(90, 90, 95);
       button.FlatAppearance.BorderSize = 1;
       button.Click += ModeButton_Click;
@@ -1435,11 +1852,18 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     {
       Button button = modeButtons[i];
       bool isSelected = button.Tag is LiquifiedMode mode && mode == selectedMode;
-      button.BackColor = isSelected ? SelectedModeButtonBg : ControlBg;
-      button.ForeColor = LabelColor;
+      button.BackColor = SystemInformation.HighContrast
+        ? (isSelected ? SystemColors.Highlight : SystemColors.Control)
+        : (isSelected ? SelectedModeButtonBg : ControlBg);
+      button.ForeColor = SystemInformation.HighContrast
+        ? (isSelected ? SystemColors.HighlightText : SystemColors.ControlText)
+        : LabelColor;
       button.FlatAppearance.BorderColor = isSelected
-        ? Color.FromArgb(170, 205, 255)
-        : Color.FromArgb(90, 90, 95);
+        ? (SystemInformation.HighContrast ? SystemColors.HighlightText : Color.FromArgb(170, 205, 255))
+        : (SystemInformation.HighContrast ? SystemColors.ControlText : Color.FromArgb(90, 90, 95));
+      LiquifiedMode buttonMode = button.Tag is LiquifiedMode taggedMode ? taggedMode : selectedMode;
+      button.AccessibleDescription = GetModeDescription((int)buttonMode) +
+        (isSelected ? " Selected." : string.Empty);
     }
   }
 
@@ -1459,7 +1883,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     {
       Text = label,
       AutoSize = true,
-      ForeColor = LabelColor,
+      ForeColor = SystemInformation.HighContrast ? SystemColors.ControlText : LabelColor,
       Location = Point.Empty
     };
     row.Controls.Add(nameLabel);
@@ -1468,7 +1892,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       Text = fmt(val),
       AutoSize = false,
       Size = new Size(valW, rowH),
-      ForeColor = LabelColor,
+      ForeColor = SystemInformation.HighContrast ? SystemColors.ControlText : LabelColor,
       TextAlign = ContentAlignment.TopRight,
       Location = new Point(ctrlW - valW, 0)
     };
@@ -1484,9 +1908,11 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       TickFrequency = Math.Max(1, (max - min) / 10),
       SmallChange = Math.Max(1, (max - min) / 100),
       LargeChange = Math.Max(1, (max - min) / 10),
-      BackColor = PanelBg,
+      BackColor = SystemInformation.HighContrast ? SystemColors.Control : PanelBg,
       Margin = new Padding(0, 0, 0, S(2))
     };
+    tb.AccessibleName = label;
+    tb.AccessibleDescription = fmt(val);
     parent.Controls.Add(tb);
 
     return (tb, valLabel);
@@ -1497,7 +1923,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     Text = text,
     AutoSize = true,
     MaximumSize = new Size(maxW, 0),
-    ForeColor = Color.FromArgb(160, 170, 180),
+    ForeColor = SystemInformation.HighContrast ? SystemColors.ControlText : Color.FromArgb(160, 170, 180),
     Font = new Font(Font.FontFamily, Font.Size * 0.9f, FontStyle.Italic),
     Margin = new Padding(0, 0, 0, S(2))
   };
@@ -1536,10 +1962,24 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   {
     if (disposing)
     {
-      origSurface?.Dispose();
-      workSurface?.Dispose();
-      snapSurface?.Dispose();
-      freezeOverlaySurface?.Dispose();
+      Interlocked.Increment(ref previewGeneration);
+      previewCancellation?.Cancel();
+      previewTimer.Stop();
+      previewTimer.Dispose();
+      rateTimer.Stop();
+      rateTimer.Dispose();
+      uiToolTip.Dispose();
+      foreach (Button button in modeButtons)
+      {
+        button.Image?.Dispose();
+        button.Image = null;
+      }
+      lock (previewSurfaceLock)
+      {
+        origSurface?.Dispose();
+        workSurface?.Dispose();
+        backdropSurface?.Dispose();
+      }
     }
     base.OnDispose(disposing);
   }
@@ -1550,11 +1990,87 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   private sealed class DoubleBufferedPanel : Panel
   {
+    private const int WmPointerUpdate = 0x0245;
+    private const int WmPointerDown = 0x0246;
+    private const int WmPointerUp = 0x0247;
+    private const uint PenPointerType = 3;
+    private const uint PenMaskPressure = 1;
+
+    private Action<Point, float, int, bool>? penInput;
+
+    public void SetPenInput(Action<Point, float, int, bool> callback) => penInput = callback;
+
     public DoubleBufferedPanel()
     {
       DoubleBuffered = true;
       ResizeRedraw = true;
       SetStyle(ControlStyles.Selectable, true);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+      if (m.Msg is WmPointerDown or WmPointerUpdate or WmPointerUp)
+      {
+        uint pointerId = (uint)(m.WParam.ToInt64() & 0xFFFF);
+        if (GetPointerPenInfo(pointerId, out PointerPenInfo info) &&
+            info.PointerInfo.PointerType == PenPointerType)
+        {
+          Point screenPoint = new(info.PointerInfo.PixelLocation.X, info.PointerInfo.PixelLocation.Y);
+          Point location = PointToClient(screenPoint);
+          float pressure = (info.PenMask & PenMaskPressure) != 0
+            ? Math.Clamp(info.Pressure / 1024f, 0f, 1f)
+            : 1f;
+          int phase = m.Msg == WmPointerDown ? 0 : m.Msg == WmPointerUpdate ? 1 : 2;
+          penInput?.Invoke(location, pressure, phase, (info.PenMask & PenMaskPressure) != 0);
+          m.Result = IntPtr.Zero;
+          return;
+        }
+      }
+      base.WndProc(ref m);
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetPointerPenInfo(uint pointerId, out PointerPenInfo penInfo);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+      public int X;
+      public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointerInfo
+    {
+      public uint PointerType;
+      public uint PointerId;
+      public uint FrameId;
+      public uint PointerFlags;
+      public IntPtr SourceDevice;
+      public IntPtr TargetWindow;
+      public NativePoint PixelLocation;
+      public NativePoint HimetricLocation;
+      public NativePoint PixelLocationRaw;
+      public NativePoint HimetricLocationRaw;
+      public uint Time;
+      public uint HistoryCount;
+      public int InputData;
+      public uint KeyStates;
+      public ulong PerformanceCount;
+      public int ButtonChangeType;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointerPenInfo
+    {
+      public PointerInfo PointerInfo;
+      public uint PenFlags;
+      public uint PenMask;
+      public uint Pressure;
+      public uint Rotation;
+      public int TiltX;
+      public int TiltY;
     }
   }
 }

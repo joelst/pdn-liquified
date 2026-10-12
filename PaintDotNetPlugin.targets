@@ -1,0 +1,33 @@
+<Project>
+  <PropertyGroup>
+    <DeployPlugins Condition="'$(DeployPlugins)' == ''">false</DeployPlugins>
+  </PropertyGroup>
+  <Target Name="TrimAndMerge" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'Release'">
+    <ItemGroup>
+      <_ILLinkDll Include="$(PkgMicrosoft_NET_ILLink_Tasks)\tools\*\illink.dll" />
+      <_ILLinkRefDir Include="$([System.IO.Path]::GetDirectoryName('%(ReferencePath.FullPath)'))" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_ILLinkDllPath>@(_ILLinkDll)</_ILLinkDllPath>
+      <_ILLinkRefDirArgs>@(_ILLinkRefDir-&gt;Distinct()-&gt;'-d &quot;%(Identity)&quot;', ' ')</_ILLinkRefDirArgs>
+    </PropertyGroup>
+    <Error Condition="'$(_ILLinkDllPath)' == '' Or $(_ILLinkDllPath.Contains(';'))" Text="Expected exactly one ILLink tool, found '$(_ILLinkDllPath)'." />
+    <!-- Resolve framework references so trimming preserves attributes such as InlineArray. -->
+    <!-- Always start from the compiler output, never a previously merged TargetPath. -->
+    <Exec Command="dotnet exec &quot;$(_ILLinkDllPath)&quot; -a &quot;$(IntermediateOutputPath)$(TargetName).dll&quot; all --trim-mode skip --action skip --action copy &quot;$(TargetName)&quot; --action link &quot;ComputeSharp.Core&quot; --action link &quot;ComputeSharp.D2D1&quot; -d &quot;$(TargetDir.TrimEnd('\'))&quot; $(_ILLinkRefDirArgs) --skip-unresolved -out &quot;$(TargetDir)output&quot;" />
+    <Exec Command="&quot;$(PkgILRepack)\tools\ilrepack&quot; /internalize /union &quot;$(TargetDir)output\$(TargetName).dll&quot; &quot;$(TargetDir)output\ComputeSharp.Core.dll&quot; &quot;$(TargetDir)output\ComputeSharp.D2D1.dll&quot; /lib:&quot;$(PdnRoot)&quot; /lib:&quot;$(TargetDir)output&quot; /out:&quot;$(TargetPath)&quot;" />
+    <RemoveDir Directories="$(TargetDir)output" />
+    <Delete Files="$(TargetDir)ComputeSharp.Core.dll;$(TargetDir)ComputeSharp.D2D1.dll;$(TargetDir)$(TargetName).deps.json" />
+  </Target>
+  <Target Name="DeployToPaintDotNetEffects" AfterTargets="TrimAndMerge" Condition="'$(Configuration)' == 'Release' AND '$(DeployPlugins)' == 'true'">
+    <PropertyGroup>
+      <UserDocumentsDir>$([System.Environment]::GetFolderPath(SpecialFolder.MyDocuments))</UserDocumentsDir>
+      <EffectivePdnEffectsDir Condition="'$(PdnEffectsDirOverride)' != ''">$(PdnEffectsDirOverride)</EffectivePdnEffectsDir>
+      <EffectivePdnEffectsDir Condition="'$(PdnEffectsDirOverride)' == '' AND '$(UserDocumentsDir)' != ''">$(UserDocumentsDir)\paint.net App Files\Effects</EffectivePdnEffectsDir>
+    </PropertyGroup>
+    <Error Condition="'$(EffectivePdnEffectsDir)' == ''" Text="Specify PdnEffectsDirOverride for deployment." />
+    <Message Text="Deploying plugin to $(EffectivePdnEffectsDir)" Importance="high" />
+    <MakeDir Directories="$(EffectivePdnEffectsDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(EffectivePdnEffectsDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

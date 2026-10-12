@@ -56,7 +56,9 @@ public sealed class DocumentRectifyConfigToken : EffectConfigToken
       : base(copyMe)
   {
     Quality = copyMe.Quality;
-    Corners = (float[])copyMe.Corners.Clone();
+    Corners = copyMe.Corners == null
+        ? Array.Empty<float>()
+        : (float[])copyMe.Corners.Clone();
     AspectMode = copyMe.AspectMode;
     CustomAspect = copyMe.CustomAspect;
   }
