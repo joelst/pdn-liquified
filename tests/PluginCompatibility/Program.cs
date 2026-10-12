@@ -54,6 +54,18 @@ internal static class Program
                     formType.GetMethod("OnUpdateDialogFromToken", BindingFlags.Instance | BindingFlags.NonPublic)!
                         .Invoke(form, new[] { token });
                     Control canvas = (Control)formType.GetField("canvas", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    ToolTip tooltip = (ToolTip)formType.GetField("uiToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    string help = Descendants(form).OfType<Label>()
+                        .Single(label => label.Text.Contains("F6:", StringComparison.Ordinal)).Text;
+                    foreach (string guidance in new[] { form.Text, help, tooltip.GetToolTip(canvas) ?? string.Empty })
+                    {
+                        if (!guidance.Contains("Ctrl+Page Up/Down", StringComparison.Ordinal) ||
+                            !guidance.Contains("Tab", StringComparison.Ordinal) ||
+                            !guidance.Contains("focus", StringComparison.OrdinalIgnoreCase) ||
+                            guidance.Contains("Tab-select", StringComparison.OrdinalIgnoreCase) ||
+                            guidance.Contains("Tab: select", StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidOperationException(name + " has stale or incomplete visible keyboard guidance.");
+                    }
                     MethodInfo isInputKey = canvas.GetType().GetMethod("IsInputKey", BindingFlags.Instance | BindingFlags.NonPublic)!;
                     MethodInfo keyDown = formType.GetMethod("Canvas_KeyDown", BindingFlags.Instance | BindingFlags.NonPublic)!;
                     foreach (Keys keys in new[] { Keys.Tab, Keys.Shift | Keys.Tab })

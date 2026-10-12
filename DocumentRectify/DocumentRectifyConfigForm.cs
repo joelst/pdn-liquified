@@ -162,7 +162,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
   {
     SuspendLayout();
 
-    Text = "Document Rectify - Drag corners, Tab-select; arrows nudge, Shift+arrows move 10 pixels";
+    Text = "Document Rectify - Ctrl+Page Up/Down selects corners; Tab moves focus";
     ClientSize = new Size(S(1000), S(700));
     MinimumSize = new Size(S(600), S(400));
     FormBorderStyle = FormBorderStyle.Sizable;
@@ -277,8 +277,8 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     var helpLabel = new Label
     {
       Text = "Drag TL/TR/BR/BL handles to align\nwith the document corners.\n\n" +
-               "Left-click: drag corner\nTab: select corner; arrows: nudge, Shift+arrows: 10 pixels\n" +
-               "Shift+Tab: previous corner\nF6: edit X/Y coordinates\n" +
+               "Left-click: drag corner\nCtrl+Page Up/Down: previous / next corner\n" +
+               "Tab / Shift+Tab: move focus\nArrows: nudge; Shift+arrows: 10 pixels\nF6: edit X/Y coordinates\n" +
                "Right-click: pan view\n" +
                "Mouse wheel: zoom\nDouble-click: fit to window",
       AutoSize = true,
@@ -331,7 +331,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
   private void WireEvents()
   {
     uiToolTip.SetToolTip(qualitySlider, "RGSS sample quality for final render");
-    uiToolTip.SetToolTip(canvas, "Left-click or Tab-select a corner. Arrow keys move it; Shift+arrows move 10 image pixels. Right-click drag to pan; wheel to zoom.");
+    uiToolTip.SetToolTip(canvas, "Left-click or Ctrl+Page Up/Down selects a corner. Tab/Shift+Tab moves focus out of the canvas; F6 edits coordinates. Arrow keys move the corner; Shift+arrows move 10 image pixels. Right-click drag to pan; wheel to zoom.");
     uiToolTip.SetToolTip(autoDetectBtn, "Estimate document corners from image content");
     uiToolTip.SetToolTip(aspectCombo, "Aspect ratio of the rectified output");
 

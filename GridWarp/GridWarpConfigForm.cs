@@ -234,7 +234,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     {
         SuspendLayout();
 
-        Text = "Grid Warp \u2013 drag or Tab-select points; arrows nudge, Shift+arrows move 10 pixels";
+        Text = "Grid Warp \u2013 Ctrl+Page Up/Down selects points; Tab moves focus";
         ClientSize = new Size(S(1000), S(700));
         MinimumSize = new Size(S(600), S(400));
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -328,7 +328,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         {
             Text = "Left-click: drag control points\nRight-click: pan view\n" +
                    "Mouse wheel: zoom\nDouble-click: fit to window\n" +
-                   "Tab / Shift+Tab on canvas: next / previous point\n" +
+                   "Ctrl+Page Up/Down: previous / next point\nTab / Shift+Tab: move focus\n" +
                    "Arrows: 1 pixel; Shift+arrows: 10 pixels\nF6: edit X/Y coordinates\n" +
                    "Ctrl+Z / Ctrl+Y: undo / redo",
             AutoSize = true,
@@ -402,7 +402,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         uiToolTip.SetToolTip(gridWidthSlider, "Number of horizontal grid cells");
         uiToolTip.SetToolTip(gridHeightSlider, "Number of vertical grid cells");
         uiToolTip.SetToolTip(qualitySlider, "RGSS sample quality for final render");
-        uiToolTip.SetToolTip(canvas, "Left-click or Tab-select a control point. Arrow keys move it; Shift+arrows move 10 image pixels. Right-click drag to pan; wheel to zoom.");
+        uiToolTip.SetToolTip(canvas, "Left-click or Ctrl+Page Up/Down selects a control point. Tab/Shift+Tab moves focus out of the canvas; F6 edits coordinates. Arrow keys move the point; Shift+arrows move 10 image pixels. Right-click drag to pan; wheel to zoom.");
 
         gridWidthSlider.ValueChanged += (_, _) =>
         {
