@@ -49,6 +49,39 @@ internal static class Program
                 Type formType = types.Single(type => type.Name.EndsWith("ConfigForm", StringComparison.Ordinal));
                 using Form form = (Form)Activator.CreateInstance(formType, nonPublic: true)!;
                 form.CreateControl();
+                if (name == "LiquifiedPlugin")
+                {
+                    MethodInfo disposeEffects = effectType.GetMethod("DisposeEffects", BindingFlags.Static | BindingFlags.NonPublic)!
+                        .MakeGenericMethod(typeof(IDisposable));
+                    foreach (bool partial in new[] { false, true })
+                    {
+                        TrackingDisposable first = new();
+                        TrackingDisposable last = new();
+                        object?[] parameters = { new IDisposable?[] { first, partial ? null : new TrackingDisposable(), last } };
+                        disposeEffects.Invoke(null, parameters);
+                        if (parameters[0] is not null || first.DisposeCount != 1 || last.DisposeCount != 1)
+                            throw new InvalidOperationException("Liquified did not dispose and clear its complete or partial effect array.");
+                        disposeEffects.Invoke(null, parameters);
+                        if (first.DisposeCount != 1 || last.DisposeCount != 1)
+                            throw new InvalidOperationException("Liquified disposed effects twice after clearing the array.");
+                    }
+                }
+                if (name == "DocumentRectifyPlugin")
+                {
+                    PropertyInfo aspectMode = tokenType.GetProperty("AspectMode")!;
+                    Type modeType = aspectMode.PropertyType;
+                    int expected = Convert.ToInt32(Enum.Parse(modeType, "PreserveDetected"));
+                    ComboBox aspectCombo = (ComboBox)formType.GetField("aspectCombo", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    foreach (int value in new[] { -1, 999 }.Concat(Enum.GetValues(modeType).Cast<object>().Select(Convert.ToInt32)))
+                    {
+                        aspectMode.SetValue(token, Enum.ToObject(modeType, value));
+                        formType.GetMethod("OnUpdateDialogFromToken", BindingFlags.Instance | BindingFlags.NonPublic)!
+                            .Invoke(form, new[] { token });
+                        int selected = Enum.IsDefined(modeType, value) ? value : expected;
+                        if (aspectCombo.SelectedIndex != selected)
+                            throw new InvalidOperationException("Document Rectify changed the valid mode or used an inconsistent malformed-mode fallback.");
+                    }
+                }
                 if (name is "GridWarpPlugin" or "DocumentRectifyPlugin")
                 {
                     formType.GetMethod("OnUpdateDialogFromToken", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -178,6 +211,12 @@ internal static class Program
             }
             return 1;
         }
+    }
+
+    private sealed class TrackingDisposable : IDisposable
+    {
+        public int DisposeCount { get; private set; }
+        public void Dispose() => DisposeCount++;
     }
 
     private static IEnumerable<Control> Descendants(Control parent)

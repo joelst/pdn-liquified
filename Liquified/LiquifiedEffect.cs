@@ -46,33 +46,44 @@ internal sealed partial class LiquifiedEffect : GpuImageEffect<LiquifiedConfigTo
         if (quality is < 1 or > 4)
             throw new ArgumentOutOfRangeException(nameof(Token.Quality), "Quality must be between one and four.");
 
-        int sampleCount = quality * quality;
-        scenePositionEffects = new ScenePositionEffect[sampleCount];
-        subPxScenePositionEffects = new HlslBinaryOperatorEffect[sampleCount];
-        sampleMapEffects = new IDeviceEffect[sampleCount];
-
-        for (int i = 0; i < sampleCount; i++)
+        DisposeEffectGraph();
+        SampleMapRenderer? renderer = null;
+        try
         {
-            scenePositionEffects[i] = new ScenePositionEffect(deviceContext);
+            int sampleCount = quality * quality;
+            scenePositionEffects = new ScenePositionEffect[sampleCount];
+            subPxScenePositionEffects = new HlslBinaryOperatorEffect[sampleCount];
+            sampleMapEffects = new IDeviceEffect[sampleCount];
 
-            subPxScenePositionEffects[i] = new HlslBinaryOperatorEffect(deviceContext);
-            subPxScenePositionEffects[i].Properties.Parameter1.SetValue(HlslEffectParameter.Input);
-            subPxScenePositionEffects[i].Properties.Input1.Set(scenePositionEffects[i]);
-            subPxScenePositionEffects[i].Properties.Operator.SetValue(HlslBinaryOperator.Add);
-            subPxScenePositionEffects[i].Properties.Parameter2.SetValue(HlslEffectParameter.Value);
+            for (int i = 0; i < sampleCount; i++)
+            {
+                scenePositionEffects[i] = new ScenePositionEffect(deviceContext);
 
-            sampleMapEffects[i] = deviceContext.CreateEffect(sampleMapShaderID);
-            sampleMapEffects[i].SetInput(0, subPxScenePositionEffects[i]);
+                subPxScenePositionEffects[i] = new HlslBinaryOperatorEffect(deviceContext);
+                subPxScenePositionEffects[i].Properties.Parameter1.SetValue(HlslEffectParameter.Input);
+                subPxScenePositionEffects[i].Properties.Input1.Set(scenePositionEffects[i]);
+                subPxScenePositionEffects[i].Properties.Operator.SetValue(HlslBinaryOperator.Add);
+                subPxScenePositionEffects[i].Properties.Parameter2.SetValue(HlslEffectParameter.Value);
+
+                sampleMapEffects[i] = deviceContext.CreateEffect(sampleMapShaderID);
+                sampleMapEffects[i].SetInput(0, subPxScenePositionEffects[i]);
+            }
+
+            renderer = new SampleMapRenderer(deviceContext);
+            renderer.Properties.Input.Set(Environment.SourceImage);
+            renderer.Properties.EdgeMode.SetValue(SampleMapEdgeMode.Clamp);
+            renderer.Properties.SampleMaps.SetCount(sampleCount);
+            for (int i = 0; i < sampleCount; i++)
+                renderer.Properties.SampleMaps[i].Set(sampleMapEffects[i]);
+
+            return renderer;
         }
-
-        var renderer = new SampleMapRenderer(deviceContext);
-        renderer.Properties.Input.Set(Environment.SourceImage);
-        renderer.Properties.EdgeMode.SetValue(SampleMapEdgeMode.Clamp);
-        renderer.Properties.SampleMaps.SetCount(sampleCount);
-        for (int i = 0; i < sampleCount; i++)
-            renderer.Properties.SampleMaps[i].Set(sampleMapEffects[i]);
-
-        return renderer;
+        catch
+        {
+            renderer?.Dispose();
+            DisposeEffectGraph();
+            throw;
+        }
     }
 
     protected override InspectTokenAction OnInspectTokenChanges(
@@ -143,11 +154,25 @@ internal sealed partial class LiquifiedEffect : GpuImageEffect<LiquifiedConfigTo
     {
         displacementBitmap?.Dispose();
         displacementBitmap = null;
-        scenePositionEffects = null;
-        subPxScenePositionEffects = null;
-        sampleMapEffects = null;
+        DisposeEffectGraph();
         maskWorkspace = null;
         base.OnInvalidateDeviceResources();
+    }
+
+    private void DisposeEffectGraph()
+    {
+        DisposeEffects(ref sampleMapEffects);
+        DisposeEffects(ref subPxScenePositionEffects);
+        DisposeEffects(ref scenePositionEffects);
+    }
+
+    private static void DisposeEffects<T>(ref T[]? effects) where T : class, IDisposable
+    {
+        if (effects is null)
+            return;
+        foreach (T? effect in effects)
+            effect?.Dispose();
+        effects = null;
     }
 
     private static Vector2Float GetRgssOffset(int quality, int index)

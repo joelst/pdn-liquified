@@ -92,8 +92,8 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
       }
     }
 
-    aspectCombo.SelectedIndex = Math.Clamp((int)token.AspectMode,
-        (int)DocumentRectifyAspectMode.FillCanvas, (int)DocumentRectifyAspectMode.Custom);
+    aspectCombo.SelectedIndex = (int)(Enum.IsDefined(token.AspectMode)
+        ? token.AspectMode : DocumentRectifyAspectMode.PreserveDetected);
 
     float ratio = float.IsFinite(token.CustomAspect) && token.CustomAspect > 0f ? token.CustomAspect : 1f;
     // Represent ratio as W/H using width=ratio*100, height=100 if input doesn't have separate values.
