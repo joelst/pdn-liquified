@@ -52,6 +52,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     // ── Undo / redo ──────────────────────────────────────────
     private readonly List<float[]> undoStack = new();
     private readonly List<float[]> redoStack = new();
+    private const int MaximumUndoSteps = 256;
 
     // ── CPU preview surfaces ─────────────────────────────────
     private Surface? origSurface;
@@ -613,8 +614,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
                 SelectGridPoint(hitIdx);
                 dragPointIndex = hitIdx;
                 // Save undo snapshot before starting drag
-                undoStack.Add((float[])displacements.Clone());
-                redoStack.Clear();
+                RecordUndo();
                 canvas.Invalidate();
             }
         }
@@ -729,8 +729,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     private void NudgeSelectedGridPoint(Keys key, float amount)
     {
         if (origSurface == null) return;
-        undoStack.Add((float[])displacements.Clone());
-        redoStack.Clear();
+        RecordUndo();
         int offset = selectedGridPointIndex * 2;
         switch (key)
         {
@@ -780,10 +779,23 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     //  Undo / Redo / Reset
     // ═════════════════════════════════════════════════════════
 
+    private void AddHistorySnapshot(List<float[]> history)
+    {
+        if (history.Count >= MaximumUndoSteps)
+            history.RemoveAt(0);
+        history.Add((float[])displacements.Clone());
+    }
+
+    private void RecordUndo()
+    {
+        AddHistorySnapshot(undoStack);
+        redoStack.Clear();
+    }
+
     private void Undo()
     {
         if (undoStack.Count == 0) return;
-        redoStack.Add((float[])displacements.Clone());
+        AddHistorySnapshot(redoStack);
         displacements = undoStack[^1];
         undoStack.RemoveAt(undoStack.Count - 1);
         SelectGridPoint(selectedGridPointIndex);
@@ -795,7 +807,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     private void Redo()
     {
         if (redoStack.Count == 0) return;
-        undoStack.Add((float[])displacements.Clone());
+        AddHistorySnapshot(undoStack);
         displacements = redoStack[^1];
         redoStack.RemoveAt(redoStack.Count - 1);
         SelectGridPoint(selectedGridPointIndex);
@@ -806,8 +818,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
     private void ResetGrid()
     {
-        undoStack.Add((float[])displacements.Clone());
-        redoStack.Clear();
+        RecordUndo();
         InitDisplacements(currentGridWidth, currentGridHeight);
         SelectGridPoint(selectedGridPointIndex);
         SchedulePreview();
@@ -1278,8 +1289,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         float dx = editX ? (float)pointX.Value - col * ((float)origSurface.Width / currentGridWidth) : displacements[offset];
         float dy = editX ? displacements[offset + 1] : (float)pointY.Value - row * ((float)origSurface.Height / currentGridHeight);
         if (dx == displacements[offset] && dy == displacements[offset + 1]) return;
-        undoStack.Add((float[])displacements.Clone());
-        redoStack.Clear();
+        RecordUndo();
         displacements[offset] = dx;
         displacements[offset + 1] = dy;
         SelectGridPoint(selectedGridPointIndex);

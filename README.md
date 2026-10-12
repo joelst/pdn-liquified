@@ -57,7 +57,7 @@ Windows Ink hardware; type-loading checks do not exercise GPU rendering or pen i
 
 ### Grid Warp (Effects > Tools > Grid Warp)
 
-- **Draggable control point grid** -- 2×2 to 6×6 cells (up to 49 control points)
+- **Draggable control point grid** -- independent width/height from 2 to 50 cells (up to 2,601 control points)
 - **Bilinear displacement interpolation** -- smooth distortion across the image
 - **GPU rendering** via sample-map shader with RGSS multisampling
 - **Interactive canvas** -- drag points with a bounded, cancellable background preview; GPU renders full-resolution output
@@ -77,6 +77,10 @@ Windows Ink hardware; type-loading checks do not exercise GPU rendering or pen i
 Grid Warp and Document Rectify canvases show keyboard focus. `Ctrl+0` resets the view
 to 100%; Grid Warp supports `Ctrl+Z`/`Ctrl+Y` for keyboard and numeric edits. Both
 dialogs rescale when moved between monitors with different DPI.
+
+Grid Warp retains at most 256 undo steps. At the maximum 50×50-cell grid, each
+displacement snapshot is about 20 KiB; 256 snapshots use about 5.1 MiB of array
+storage. Older history is discarded as new edits are recorded.
 
 ## Build
 

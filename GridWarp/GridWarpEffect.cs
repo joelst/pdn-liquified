@@ -14,7 +14,7 @@ namespace GridWarpPlugin;
 /// GPU-accelerated Grid Warp effect for Paint.NET 5.x.
 /// Uses <see cref="SampleMapRenderer"/> with RGSS multisampling for high-quality mesh-based distortion.
 /// A grid of draggable control points defines bilinear displacement across the image.
-/// Supports grids from 2×2 to 6×6 cells (max 7×7 = 49 control points).
+/// Supports independent grid dimensions from 2 to 50 cells (max 51×51 = 2,601 control points).
 /// The effect performs local image processing only (no network or external I/O).
 /// </summary>
 internal sealed partial class GridWarpEffect : GpuImageEffect<GridWarpConfigToken>

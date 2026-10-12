@@ -90,6 +90,32 @@ internal static class Program
                         !canvas.AccessibleDescription!.Contains("Tab") || !canvas.AccessibleDescription.Contains("F6"))
                         throw new InvalidOperationException(name + " is missing accessible point navigation or escape guidance.");
                 }
+                if (name == "GridWarpPlugin")
+                {
+                    FieldInfo displacementField = formType.GetField("displacements", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    float[] displacement = new float[51 * 51 * 2];
+                    displacementField.SetValue(form, displacement);
+                    MethodInfo recordUndo = formType.GetMethod("RecordUndo", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    System.Collections.IList undo = (System.Collections.IList)formType.GetField("undoStack", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    System.Collections.IList redo = (System.Collections.IList)formType.GetField("redoStack", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    undo.Clear();
+                    for (int i = 0; i < 300; i++)
+                    {
+                        displacement[0] = i;
+                        recordUndo.Invoke(form, null);
+                    }
+                    if (undo.Count != 256 || ((float[])undo[0]!)[0] != 44 ||
+                        ((float[])undo[255]!)[0] != 299 || ReferenceEquals(undo[255], displacement))
+                        throw new InvalidOperationException("Grid Warp history is unbounded, ordered incorrectly, or shares mutable arrays.");
+                    MethodInfo addSnapshot = formType.GetMethod("AddHistorySnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    for (int i = 0; i < 300; i++)
+                        addSnapshot.Invoke(form, new object[] { redo });
+                    if (redo.Count != 256)
+                        throw new InvalidOperationException("Grid Warp redo history is unbounded.");
+                    recordUndo.Invoke(form, null);
+                    if (redo.Count != 0 || undo.Count != 256)
+                        throw new InvalidOperationException("Grid Warp new edits do not clear redo while preserving the history limit.");
+                }
                 foreach (System.Drawing.Size size in new[] { new System.Drawing.Size(1280, 900), new System.Drawing.Size(900, 700) })
                 {
                     form.ClientSize = size;
