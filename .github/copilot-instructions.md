@@ -1,24 +1,32 @@
 # Copilot Instructions — pdn-liquified
 
-Paint.NET 5.x plugin providing GPU-accelerated distortion effects via ComputeSharp D2D1: interactive brush-based liquified and mesh-based grid warp.
+Paint.NET 5.x plugins providing GPU-accelerated distortion effects via ComputeSharp D2D1: brush-based Liquified, mesh-based Grid Warp, and Document Rectify.
 
 ## Build
 
 ```powershell
 dotnet build LiquifiedPlugins.slnx                 # Debug
-dotnet build -c Release LiquifiedPlugins.slnx      # Release → IL trim + ILRepack merge + auto-deploy
+dotnet build -c Release LiquifiedPlugins.slnx      # Release: IL trim + ILRepack merge; no deployment
 ```
 
-**Prerequisites:** .NET 9.0 SDK, Paint.NET 5.x installed (default `C:\Program Files\paint.net`).
-Override the install path with `/p:PdnRoot="<path>"`.
+**Prerequisites:** .NET 9.0 SDK and stable Paint.NET 5.1.12 reference assemblies (default `C:\Program Files\paint.net`).
+Override the reference path with `/p:PdnRoot="<path>"`. Do not build these .NET 9 plugins against development assemblies requiring .NET 11.
+Deployment is opt-in with `/p:DeployPlugins=true`; it uses the actual Documents Effects folder.
 
-There are no automated tests — verify by loading Paint.NET and running the effects (**Effects > Tools > Liquified**, **Grid Warp**, and **Document Rectify**).
+Run `dotnet run --project tests\Liquified.RegressionTests -c Release`,
+`.\tests\Installer.Tests.ps1`, and
+`.\tests\Test-PluginCompatibility.ps1 -PortableDirectory '<disposable portable host>'`.
+Signing regressions use Pester 5.7.1 in `tests\ReleaseSigning.Tests.ps1`.
+Also verify in Paint.NET (**Effects > Tools > Liquified**, **Grid Warp**, and **Document Rectify**):
+automated checks do not validate live GPU rendering, pen hardware, or mixed-DPI interaction.
 
 ## Architecture
 
 | File | Role |
 | --- | --- |
-| `Liquified/LiquifiedEffect.cs` | Main `GpuImageEffect<LiquifiedConfigToken>` entry point. Contains `LiquifiedMode` enum (10 modes), `BrushStroke` class, `LiquifiedSampleMapShader`, and packed stroke dispatch. |
+| `Liquified/LiquifiedEffect.cs` | `GpuImageEffect<LiquifiedConfigToken>` entry point; uploads the inverse deformation field and renders via `LiquifiedSampleMapShader`. |
+| `Liquified/LiquifiedDeformation.cs` | Shared CPU/GPU sample-map evaluation, chronological masks, reconstruction, and resource validation. |
+| `Liquified/LiquifiedTypes.cs` | Brush modes, strokes, and chronological history actions. |
 | `Liquified/LiquifiedConfigForm.cs` | Interactive `EffectConfigForm2` dialog — zoom/pan canvas, brush painting, freeze mask, undo/redo, CPU preview. |
 | `Liquified/LiquifiedConfigToken.cs` | Strongly-typed `EffectConfigToken` — mode, brush settings, quality, and stroke list. |
 | `GridWarp/GridWarpEffect.cs` | `GpuImageEffect<GridWarpConfigToken>` with `GridWarpSampleMapShader` — bilinear displacement from grid control points. |
@@ -33,8 +41,11 @@ There are no automated tests — verify by loading Paint.NET and running the eff
 
 - **Namespace per project:** `LiquifiedPlugin`, `GridWarpPlugin`, and `DocumentRectifyPlugin`.
 - **10 liquified brush modes:** ForwardWarp, Pucker, Bloat, TwistCW, TwistCCW, PushLeft, Reconstruct, Turbulence, Freeze, Unfreeze.
-- **GPU rendering:** `SampleMapRenderer` with chained batches of `LiquifiedSampleMapShader` (16 stroke points per batch). RGSS multisampling for quality levels.
-- **CPU preview:** Per-pixel displacement accumulation in `RegeneratePreview()`, matching GPU shader constants exactly.
+- **GPU rendering:** `SampleMapRenderer` samples the original image using an uploaded full-resolution inverse map; no stroke batches or point cap. Quality controls RGSS multisampling.
+- **CPU preview:** Background incremental replay uses the same deformation evaluator; cached map and mask share a history boundary. Bilinear preview sampling differs intentionally from GPU RGSS.
+- **Resource limits:** Liquified rejects documents above 8,388,608 pixels or device/dimension limits; no silent downsampling. Both Liquified and Grid Warp retain at most 256 undo steps.
+- **Grid Warp:** Independent dimensions from 2 to 50 cells (up to 2,601 points). Dimension changes reset displacements/history.
+- **Keyboard editing:** Grid Warp/Document Rectify use Ctrl+Page Up/Down for point selection, arrows for nudging, F6 for the X editor, and normal Tab focus traversal.
 - **Smoothstep falloff:** `s*s*(3-2*s)` with density modulation. No blend cap — cumulative displacement.
 - **DPI scaling:** `AutoScaleMode.None`; manual `_dpi = DeviceDpi / 96f` with `S(int v)` helper.
 - **Obsolescence warning:** `#pragma warning disable CS0612, CS0618` for `EffectConfigForm2`.
@@ -49,8 +60,9 @@ There are no automated tests — verify by loading Paint.NET and running the eff
 internal readonly partial struct MyShader : ID2D1PixelShader { ... }
 ```
 
-Liquify strokes are packed into batches of 16 (`PackedStrokePoint`: pos, radiusDensity, modeStrength) for GPU dispatch.
-Grid warp displacements are uploaded via an RGB128Float displacement texture sampled with linear filtering.
+Liquified and Grid Warp upload displacement textures sampled with linear filtering.
+Dispose retained device-effect arrays before graph replacement/invalidation, including
+partially initialized arrays after creation failures.
 
 ## Conventions
 

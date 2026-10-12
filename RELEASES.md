@@ -4,18 +4,24 @@ This document explains how the pdn-liquified project distributes releases to end
 
 ## Release Contents
 
-Each release includes:
+The signed release ZIP contains these files at its root (no versioned subfolder):
 
 ```
-pdn-liquified-v1.0.0/
+pdn-liquified-signed.zip
 ├── LiquifiedPlugin.dll          (Liquified effect - brush-based distortion)
 ├── GridWarpPlugin.dll           (Grid Warp effect - mesh-based distortion)
 ├── DocumentRectifyPlugin.dll    (Document Rectify effect - perspective correction)
 ├── install-plugins.bat          (Batch installer - double-click to run)
 ├── install-plugins.ps1          (PowerShell installer - advanced users)
 ├── INSTALL.md                   (Detailed installation instructions)
-└── README.md                    (Overview and feature descriptions)
+├── README.md                    (Overview and feature descriptions)
+├── LICENSE                      (MIT license)
+├── SHA256SUMS.txt                (Checksums of signed DLLs)
+└── BUILD.txt                    (Source commit and originating Build run)
 ```
+
+The signed artifact also contains an external `SHA256SUMS.txt` for the ZIP itself.
+The unsigned Build packages omit the signing checksums and `BUILD.txt`.
 
 ## Installation Instructions
 
@@ -79,56 +85,43 @@ SmartScreen reputation, Paint.NET compatibility, or correct GPU behavior.
 
 ### Prerequisites
 
-- Local repository with a clean `main` branch
-- Built Release binaries (run `dotnet build -c Release LiquifiedPlugins.slnx`)
+- Changes merged to `main`, including the Build and Signed release workflows
+- Successful stable and beta Build jobs for the intended source commit
+- Configured `release` environment, OIDC federation, and Artifact Signing profile
+- Manual Paint.NET validation of all three effects, including GPU output, keyboard
+  navigation, pen input where available, and mixed-DPI interaction
 
 ### Steps to Release
 
-1. **Verify build artifacts exist:**
-   ```powershell
-   dir Liquified\bin\Release\net9.0-windows\LiquifiedPlugin.dll
-   dir GridWarp\bin\Release\net9.0-windows\GridWarpPlugin.dll
-   dir DocumentRectify\bin\Release\net9.0-windows\DocumentRectifyPlugin.dll
-   ```
+1. Confirm the main-branch Build succeeded. Wait for **Signed release**, or dispatch
+   it from `main` with that successful Build run ID. A PR Build cannot be signed by
+   this workflow.
+2. Download the `pdn-liquified-signed-<source SHA>` artifact. Keep its ZIP unchanged.
+   Extract a copy for verification; confirm every DLL has a Valid Authenticode
+   signature and timestamp, and test the extracted installer and effects.
+3. Read `BUILD.txt` inside the ZIP and tag that exact source commit, not an unrelated
+   current checkout. Replace the example version and SHA:
 
-2. **Create a release tag:**
    ```powershell
-   git tag -a v1.0.0 -m "Release version 1.0.0"
+   $sourceCommit = 'replace-with-the-40-character-source-SHA-from-BUILD.txt'
+   if ($sourceCommit -notmatch '^[a-f0-9]{40}$') { throw 'Supply the source commit SHA.' }
+   git tag -a v1.0.0 $sourceCommit -m 'Release version 1.0.0'
+   if ($LASTEXITCODE -ne 0) { throw 'Tag creation failed.' }
    git push origin v1.0.0
+   if ($LASTEXITCODE -ne 0) { throw 'Tag push failed.' }
    ```
 
-3. **Package release files:**
-   ```powershell
-   $version = "1.0.0"
-   mkdir "pdn-liquified-v$version"
+4. Create a [GitHub release](../../releases/new) for that tag. Attach the unchanged
+   `pdn-liquified-signed.zip` and external `SHA256SUMS.txt`. If distributing individual
+   DLLs as well, use the signed copies from the ZIP, not local build outputs.
 
-   # Copy DLLs
-   copy "Liquified\bin\Release\net9.0-windows\LiquifiedPlugin.dll" "pdn-liquified-v$version\"
-   copy "GridWarp\bin\Release\net9.0-windows\GridWarpPlugin.dll" "pdn-liquified-v$version\"
-   copy "DocumentRectify\bin\Release\net9.0-windows\DocumentRectifyPlugin.dll" "pdn-liquified-v$version\"
-
-   # Copy installer scripts
-   copy "install-plugins.bat" "pdn-liquified-v$version\"
-   copy "install-plugins.ps1" "pdn-liquified-v$version\"
-   copy "INSTALL.md" "pdn-liquified-v$version\"
-   copy "README.md" "pdn-liquified-v$version\"
-
-   # Create ZIP
-   Compress-Archive -Path "pdn-liquified-v$version" -DestinationPath "pdn-liquified-v$version.zip"
-   ```
-
-4. **Create GitHub Release:**
-   - Go to [Releases](../../releases/new)
-   - **Tag:** `v1.0.0` (must match git tag)
-   - **Title:** `Paint.NET Distortion Plugins v1.0.0`
-   - **Description:** (use template below)
-   - **Attach files:**
-     - `pdn-liquified-v1.0.0.zip`
-     - Individual DLL files (optional, for advanced users)
+For development testing, use the flat `pdn-liquified-release-stable` or
+`pdn-liquified-release-beta` Build artifact. These are unsigned and must not be
+presented as signed public releases.
 
 ### Release Description Template
 
-```markdown
+````markdown
 # Paint.NET Distortion Plugins v1.0.0
 
 GPU-accelerated distortion effects for Paint.NET 5.x.
@@ -141,7 +134,7 @@ GPU-accelerated distortion effects for Paint.NET 5.x.
 
 ## Installation
 
-**Recommended:** Download `pdn-liquified-v1.0.0.zip` and:
+**Recommended:** Download `pdn-liquified-signed.zip` and:
 1. Extract the ZIP file
 2. Double-click `install-plugins.bat`
 3. Restart Paint.NET
@@ -150,9 +143,9 @@ See [INSTALL.md](INSTALL.md) for detailed instructions and troubleshooting.
 
 ## Requirements
 
-- Paint.NET 5.x or later
+- Paint.NET 5.1.12 or later
 - Windows 10 v21H2 or later, Windows 11, or Windows Server 2022 (64-bit)
-- .NET 9.0 runtime (included with Paint.NET)
+- Paint.NET provides its own runtime; end users do not need the .NET SDK
 
 ## Features
 
@@ -166,10 +159,10 @@ See [INSTALL.md](INSTALL.md) for detailed instructions and troubleshooting.
 - Undo/Redo/Reset with keyboard shortcuts
 
 ### Grid Warp
-- Draggable control point grid (2×2 to 6×6)
+- Independent grid dimensions from 2 to 50 cells (up to 2,601 control points)
 - Bilinear interpolation for smooth distortion
 - Real-time preview and grid overlay
-- Full undo/redo support
+- Up to 256 undo steps, with keyboard and numeric point editing
 
 ### Document Rectify
 - Automatic document corner detection
@@ -185,20 +178,15 @@ cd pdn-liquified
 dotnet build -c Release LiquifiedPlugins.slnx
 ```
 
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for full version history.
-
 ## License
 
-[License Type] - See [LICENSE](LICENSE) file
+MIT - See [LICENSE](LICENSE) file
 
 ## Support
 
 - 📖 [Installation Guide](INSTALL.md)
 - 📋 [Report Issues](../../issues)
-- 💬 [Discussions](../../discussions)
-```
+````
 
 ## Distribution Channels
 
@@ -213,7 +201,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 - CI pipeline publishes merged Release builds and flat packages as stable/beta-labelled artifacts
 - Useful for testing and development
-- Available for 90 days by default
+- Availability follows the repository's Actions artifact retention policy
 - Located in workflow run details
 
 ## Best Practices

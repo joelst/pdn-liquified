@@ -24,7 +24,7 @@ This guide explains how to install the Paint.NET Distortion Plugins (Liquified, 
 If you prefer PowerShell:
 
 ```powershell
-cd "C:\path\to\extracted\files"
+Set-Location 'C:\path\to\extracted\files'
 .\install-plugins.ps1
 ```
 
@@ -131,9 +131,12 @@ If you see all three effects, installation was successful!
 Store Paint.NET, use the default user installation. Paint.NET must be installed to run
 the plugins, but user installation does not need access to its program directory.
 
-### "No plugin DLLs found"
+### "Missing ...Plugin.dll"
 
-**Solution:** You're running the installer from the wrong folder. Extract the downloaded files to a folder and run the installer from that folder.
+**Solution:** Extract the entire release package, including all three DLLs, before
+running the installer. For a source checkout, build all three projects in Release.
+The installer defaults to its own directory, not the shell's working directory;
+use `-PluginDirectory 'C:\path\to\package'` to select another source.
 
 ### Plugins don't appear in Paint.NET
 
@@ -154,8 +157,10 @@ compatibility failures. A successful file copy does not prove that the host load
 **Solution:** The default user installation does not require admin access. Only
 `-InstallationScope System` requests elevation:
 
-- Right-click `install-plugins.bat` → **Run as administrator**
-- Or use PowerShell: `.\install-plugins.ps1 -InstallationScope System`
+Use PowerShell: `.\install-plugins.ps1 -InstallationScope System`
+
+Running the batch file as administrator does not select system installation; its
+default remains the user folder.
 
 ### Paint.NET is crashing after installation
 
@@ -166,9 +171,19 @@ compatibility failures. A successful file copy does not prove that the host load
 3. Restart Paint.NET
 4. Report the issue on [GitHub Issues](https://github.com/joelst/pdn-liquified/issues)
 
+### Liquified rejects a large image
+
+Liquified supports at most 8,388,608 pixels and 16,384 pixels per dimension, subject
+to the GPU's bitmap limit. A 3840 x 2160 image fits; an 8K image does not. Reduce
+image dimensions before using this effect. It does not silently downsample or drop
+strokes. Grid Warp and Document Rectify do not use this Liquified-specific limit.
+
 ## Uninstallation
 
 To remove the plugins:
+
+Close Paint.NET before deleting the DLLs. Remove only these plugin files, not the
+Effects directory or other plugins.
 
 1. Navigate to Paint.NET Effect installation locations:
 

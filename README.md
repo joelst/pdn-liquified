@@ -5,7 +5,7 @@ GPU-accelerated and high-DPI compatible distortion effects for Paint.NET 5.x: in
 **Documentation:**
 
 - [Installation Guide](./INSTALL.md) — Step-by-step installation instructions and troubleshooting
-- [Release Notes](./RELEASES.md) — How to create releases and distribution guide
+- [Release Distribution Guide](./RELEASES.md) — Signing, packaging, and publishing
 - [Security Policy](./SECURITY.md) — Reporting security issues
 
 ## Features
@@ -35,7 +35,7 @@ that a low-resolution preview reduces final rendering requirements.
 
 Liquify currently accepts at most **8,388,608 pixels** and **16,384 pixels per
 dimension**, additionally bounded by the active device's bitmap limit. This includes
-3840 x 2160 (4K). It reserves a conservative 128 bytes/pixel within a 1 GiB pipeline
+3840 x 2160 (4K). It estimates a conservative 128 bytes/pixel within a 1 GiB pipeline
 budget and rejects larger documents explicitly before image-sized allocations; it
 does not silently downsample or omit strokes. Reduce document dimensions to use Liquify
 on larger images. This resource limit does not apply to Grid Warp or Document Rectify.
@@ -65,6 +65,10 @@ Windows Ink hardware; type-loading checks do not exercise GPU rendering or pen i
 - **Undo / Redo / Reset** with keyboard shortcuts
 - **Accessible point editing** -- select points with Ctrl+Page Up/Down, nudge with arrows (Shift for 10 pixels), or edit X/Y numerically; Tab/Shift+Tab leaves the canvas
 
+With the canvas focused, `F6` focuses the selected point's X editor; Tab then moves
+to Y. Arrow-key repeats are separate undo steps. Changing grid dimensions resets the
+displacements and clears history; choose the grid size before shaping the image.
+
 ### Document Rectify (Effects > Tools > Document Rectify)
 
 - **Perspective correction** -- map a user-selected quadrilateral to a rectified rectangle
@@ -73,6 +77,10 @@ Windows Ink hardware; type-loading checks do not exercise GPU rendering or pen i
 - **Aspect options** -- Fill Canvas, Preserve Detected, Source, Square, Letter, Legal, A4, Custom
 - **Auto Detect** -- estimate document corners from content against background
 - **GPU rendering** via sample-map shader with RGSS multisampling
+
+Auto Detect estimates corners; inspect and adjust them before accepting the effect.
+Undefined aspect-mode values in imported tokens fall back to Preserve Detected in
+both the dialog and renderer.
 
 Grid Warp and Document Rectify canvases show keyboard focus. `Ctrl+0` resets the view
 to 100%; Grid Warp supports `Ctrl+Z`/`Ctrl+Y` for keyboard and numeric edits. Both
@@ -97,6 +105,7 @@ Release builds automatically:
 
 1. Trim unused IL via `Microsoft.NET.ILLink`
 2. Merge ComputeSharp assemblies via ILRepack
+
 Deployment is opt-in: `/p:DeployPlugins=true` copies to the actual Windows Documents
 Effects directory. `/p:PdnEffectsDirOverride="<directory>"` overrides that target.
 Copy failures fail the build. Ordinary builds and CI never modify installed plugins.
@@ -108,12 +117,16 @@ dotnet run --project tests\Liquified.RegressionTests -c Release
 dotnet run --project tests\Liquified.RegressionTests -c Release -- --benchmark
 .\tests\Installer.Tests.ps1
 .\tests\Test-PluginCompatibility.ps1 -PortableDirectory 'C:\path\to\disposable\portable\paint.net'
+Invoke-Pester -Path .\tests\ReleaseSigning.Tests.ps1
 ```
 
 The compatibility check loads the merged Release plugins using the portable host's own
 runtime, resolves types, JIT-checks effect/dialog/token methods, clones tokens, and
-constructs/disposes effects and dialogs. It is not a GPU
-render or a UI test. Also load Paint.NET and exercise all three effects (**Effects > Tools >
+constructs/disposes effects and dialogs. It also checks keyboard handlers and guidance,
+bounded Grid Warp history, malformed aspect modes, and complete/partial effect-array
+cleanup. These are programmatic checks, not end-to-end UI interaction or GPU rendering.
+Signing tests require Pester 5.7.1; see the signed-release workflow for setup.
+Also load Paint.NET and exercise all three effects (**Effects > Tools >
 Liquified**, **Grid Warp**, and **Document Rectify**), including mixed-DPI and pen input.
 
 ## Installation
@@ -123,14 +136,14 @@ Liquified**, **Grid Warp**, and **Document Rectify**), including mixed-DPI and p
 **Quick Install:**
 
 1. Download the latest release from [Releases](../../releases/latest)
-2. Double-click `install-plugins.bat`
+2. Close Paint.NET, extract the full ZIP, and double-click `install-plugins.bat`
 3. Done! Restart Paint.NET
 
 For detailed instructions, troubleshooting, and manual installation, see [INSTALL.md](./INSTALL.md).
 
-### For End Users (from Release Builds - Step by Step)
+### Installation Details
 
-2. **Run the installer script** (recommended):
+1. **Run the installer script** from the extracted package (recommended):
 
    ```powershell
    .\install-plugins.ps1
@@ -142,14 +155,14 @@ For detailed instructions, troubleshooting, and manual installation, see [INSTAL
    - Support optional system installation with `-InstallationScope System`
    - Verify every DLL's SHA256 and report failures with a nonzero exit code
 
-3. **Manual Installation** (if the script doesn't work):
+2. **Manual Installation** (if the script doesn't work):
    - Locate Paint.NET installation: typically `C:\Program Files\paint.net`
    - Copy the three DLL files to: `C:\Program Files\paint.net\Effects\`
    - Or use your actual Documents folder's `paint.net App Files\Effects\`
      (Create the `Effects` folder if it doesn't exist; do not install duplicate copies)
    - Restart Paint.NET
 
-4. **Verify Installation:**
+3. **Verify Installation:**
    - Open Paint.NET
    - Go to **Effects > Tools**
    - You should see:
@@ -207,9 +220,9 @@ This repository includes a GitHub Actions workflow at `.github/workflows/build.y
 | Bloat        | Push pixels outward from the brush center                    |
 | Twist CW     | Rotate pixels clockwise around the brush center              |
 | Twist CCW    | Rotate pixels counter-clockwise around the brush center      |
-| Push Left    | Shift pixels perpendicular to the drag direction             |
+| Push Left    | Apply tangential displacement around the brush center       |
 | Reconstruct  | Restore displaced pixels back toward their original position |
-| Turbulence   | Add random displacement to pixel positions within the brush  |
+| Turbulence   | Add deterministic noise displacement within the brush        |
 | Freeze       | Protect pixels from subsequent non-freeze liquify strokes    |
 | Unfreeze     | Remove freeze protection from previously frozen pixels       |
 
