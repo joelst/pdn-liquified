@@ -17,6 +17,11 @@ Run `dotnet run --project tests\Liquified.RegressionTests -c Release`,
 `.\tests\Installer.Tests.ps1`, and
 `.\tests\Test-PluginCompatibility.ps1 -PortableDirectory '<disposable portable host>'`.
 Signing regressions use Pester 5.7.1 in `tests\ReleaseSigning.Tests.ps1`.
+The Inno Setup installer is defined in `installer\DistortionPlugins.iss`.
+`scripts\Build-Installer.ps1` compiles it from a flat package using Inno Setup 6.5.4;
+`-Signed` requires signed DLLs and signs Setup/Uninstall with the existing Azure profile.
+`tests\InnoInstaller.Tests.ps1` installs/upgrades/uninstalls in an isolated destination;
+it refuses to run if a real wizard installation is already registered.
 Also verify in Paint.NET (**Effects > Tools > Liquified**, **Grid Warp**, and **Document Rectify**):
 automated checks do not validate live GPU rendering, pen hardware, or mixed-DPI interaction.
 

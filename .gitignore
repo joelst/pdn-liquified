@@ -8,3 +8,4 @@ obj/
 *.code-workspace
 paintdotnet_src/
 build.log
+artifacts/

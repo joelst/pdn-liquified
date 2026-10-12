@@ -4,7 +4,9 @@ This document explains how the pdn-liquified project distributes releases to end
 
 ## Release Contents
 
-The signed release ZIP contains these files at its root (no versioned subfolder):
+The recommended download is `pdn-liquified-setup.exe`, a per-user Inno Setup wizard
+with signed Setup and Uninstall executables. The optional signed release ZIP
+contains these files at its root (no versioned subfolder):
 
 ```
 pdn-liquified-signed.zip
@@ -20,16 +22,17 @@ pdn-liquified-signed.zip
 └── BUILD.txt                    (Source commit and originating Build run)
 ```
 
-The signed artifact also contains an external `SHA256SUMS.txt` for the ZIP itself.
+The signed artifact also contains the installer and an external `SHA256SUMS.txt`
+covering both the installer and ZIP.
 The unsigned Build packages omit the signing checksums and `BUILD.txt`.
 
 ## Installation Instructions
 
 ### For Users (Quickstart)
 
-1. Download the release ZIP file from [Releases](../../releases)
-2. Extract to any folder
-3. **Double-click `install-plugins.bat`**
+1. Download `pdn-liquified-setup.exe` from [Releases](../../releases)
+2. Close Paint.NET
+3. Run the setup wizard
 4. The default user install does not require administrator access
 5. Done! Restart Paint.NET to see the new effects
 
@@ -56,7 +59,8 @@ are rejected. The existing Build artifacts remain unsigned development artifacts
 Attach the ZIP and its external `SHA256SUMS.txt` from the **Signed release** artifact
 to the GitHub release. Never rebuild, trim, merge, or modify DLLs after signing.
 The workflow prepares a signed artifact; it does not publish a release automatically.
-The ZIP and installer wrappers are not themselves Authenticode-signed.
+The wizard Setup and generated Uninstall are Authenticode-signed using Inno's signing
+hook. The ZIP and legacy batch/PowerShell wrappers are not Authenticode-signed.
 
 Check an extracted DLL on Windows:
 
@@ -96,7 +100,7 @@ SmartScreen reputation, Paint.NET compatibility, or correct GPU behavior.
 1. Confirm the main-branch Build succeeded. Wait for **Signed release**, or dispatch
    it from `main` with that successful Build run ID. A PR Build cannot be signed by
    this workflow.
-2. Download the `pdn-liquified-signed-<source SHA>` artifact. Keep its ZIP unchanged.
+2. Download the `pdn-liquified-signed-<source SHA>` artifact. Keep its EXE and ZIP unchanged.
    Extract a copy for verification; confirm every DLL has a Valid Authenticode
    signature and timestamp, and test the extracted installer and effects.
 3. Read `BUILD.txt` inside the ZIP and tag that exact source commit, not an unrelated
@@ -112,7 +116,7 @@ SmartScreen reputation, Paint.NET compatibility, or correct GPU behavior.
    ```
 
 4. Create a [GitHub release](../../releases/new) for that tag. Attach the unchanged
-   `pdn-liquified-signed.zip` and external `SHA256SUMS.txt`. If distributing individual
+   `pdn-liquified-setup.exe`, `pdn-liquified-signed.zip`, and external `SHA256SUMS.txt`. If distributing individual
    DLLs as well, use the signed copies from the ZIP, not local build outputs.
 
 For development testing, use the flat `pdn-liquified-release-stable` or
@@ -134,10 +138,12 @@ GPU-accelerated distortion effects for Paint.NET 5.x.
 
 ## Installation
 
-**Recommended:** Download `pdn-liquified-signed.zip` and:
-1. Extract the ZIP file
-2. Double-click `install-plugins.bat`
+**Recommended:** Download `pdn-liquified-setup.exe` and:
+1. Close Paint.NET
+2. Run the setup wizard
 3. Restart Paint.NET
+
+The signed ZIP is available for portable/manual installation.
 
 See [INSTALL.md](INSTALL.md) for detailed instructions and troubleshooting.
 

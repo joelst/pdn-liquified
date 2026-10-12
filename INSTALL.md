@@ -10,14 +10,27 @@ This guide explains how to install the Paint.NET Distortion Plugins (Liquified, 
 
 ## Option 1: Automated Installation (Recommended)
 
-### Using the Batch File (Easiest)
+### Using the Setup Wizard
 
 1. Close Paint.NET
-2. Download the plugin DLLs and installer files from [Releases](https://github.com/joelst/pdn-liquified/releases/)
-3. Extract to a folder (e.g., `C:\Users\YourName\Downloads\pdn-liquified`)
-4. **Double-click** `install-plugins.bat`
-5. Wait for the verification message; the default user installation does not request administrator access
-6. Restart Paint.NET
+2. Download `pdn-liquified-setup.exe` from [Releases](https://github.com/joelst/pdn-liquified/releases/)
+3. Run the installer and accept the license
+4. Keep the default Documents Effects folder, or choose the Effects folder of a portable installation
+5. Finish installation, then restart Paint.NET
+
+The Inno Setup installer runs per-user without requesting administrator access.
+It supports upgrades and registers **Paint.NET Distortion Plugins** in Windows
+Installed Apps. Its uninstaller removes the three plugin DLLs and this package's
+documentation, not unrelated plugins. Do not choose a protected Program Files
+destination; use the PowerShell system-install option below when elevation is needed.
+
+Public release installers and their uninstallers are timestamped and Authenticode-signed.
+CI's `pdn-liquified-installer-unsigned` artifact is for development testing only.
+
+### ZIP / Batch Installation
+
+The portable ZIP remains available: extract the complete package and double-click
+`install-plugins.bat`. This copies DLLs but does not register an uninstaller.
 
 ### Using PowerShell Directly
 
@@ -180,7 +193,8 @@ strokes. Grid Warp and Document Rectify do not use this Liquified-specific limit
 
 ## Uninstallation
 
-To remove the plugins:
+For wizard installations, close Paint.NET and uninstall **Paint.NET Distortion
+Plugins** from Windows Installed Apps. For ZIP/manual installations:
 
 Close Paint.NET before deleting the DLLs. Remove only these plugin files, not the
 Effects directory or other plugins.

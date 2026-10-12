@@ -79,4 +79,26 @@ Describe 'Fail-closed release signing' {
         Mock Invoke-ArtifactSigning { throw 'service denied signing' }
         { & $script:signer -PackageDirectory $script:package } | Should -Throw '*service denied*'
     }
+
+    It 'signs an installer EXE without replacing package checksums' {
+        $setup = Join-Path $script:package 'setup.exe'
+        [IO.File]::WriteAllText($setup, 'unsigned setup')
+        $checksum = Join-Path $script:package 'SHA256SUMS.txt'
+        [IO.File]::WriteAllText($checksum, 'existing package checksums')
+        & $script:signer -FilePath $setup
+        Should -Invoke Invoke-ArtifactSigning -Times 1 -Exactly
+        [IO.File]::ReadAllText($checksum) | Should -Be 'existing package checksums'
+    }
+
+    It 'rejects non-EXE single-file signing' {
+        { & $script:signer -FilePath (Join-Path $script:package 'LiquifiedPlugin.dll') } | Should -Throw '*EXE*'
+        Should -Invoke Invoke-ArtifactSigning -Times 0 -Exactly
+    }
+
+    It 'accepts the temporary PE uninstaller used by Inno signing hooks' {
+        $temporaryUninstaller = Join-Path $script:package 'uninst.e32.tmp'
+        [IO.File]::WriteAllText($temporaryUninstaller, 'uninstaller fixture')
+        & $script:signer -FilePath $temporaryUninstaller
+        Should -Invoke Invoke-ArtifactSigning -Times 1 -Exactly
+    }
 }

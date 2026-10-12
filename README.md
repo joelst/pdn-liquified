@@ -135,9 +135,13 @@ Liquified**, **Grid Warp**, and **Document Rectify**), including mixed-DPI and p
 
 **Quick Install:**
 
-1. Download the latest release from [Releases](../../releases/latest)
-2. Close Paint.NET, extract the full ZIP, and double-click `install-plugins.bat`
+1. Download `pdn-liquified-setup.exe` from [Releases](../../releases/latest)
+2. Close Paint.NET and run the setup wizard; keep the default per-user Effects folder
 3. Done! Restart Paint.NET
+
+The Inno Setup installer supports upgrades and uninstall through Windows Installed
+Apps. Signed releases include signed Setup and Uninstall executables. The optional
+ZIP and batch/PowerShell installer remain available for manual or system deployment.
 
 For detailed instructions, troubleshooting, and manual installation, see [INSTALL.md](./INSTALL.md).
 
@@ -191,8 +195,31 @@ This repository includes a GitHub Actions workflow at `.github/workflows/build.y
 - Runs deformation regressions and installer checks.
 - Loads the same merged plugins in stable and beta portable host runtimes.
 - Publishes channel-labelled DLL and flat release-package artifacts.
+- Compiles and smoke-tests an unsigned Inno Setup installer on the stable job,
+  including upgrades, uninstall, and preservation of unrelated plugins.
 - A separate **Signed release** workflow signs successful main-build DLLs using Azure
-  Artifact Signing and OIDC, then produces a verified signed ZIP. See [release signing](./RELEASES.md#authenticode-signing).
+  Artifact Signing and OIDC, then produces a verified signed ZIP and signed
+  Setup/Uninstall executables. See [release signing](./RELEASES.md#authenticode-signing).
+
+### Build the installer
+
+After creating a flat Release package with all three DLLs, `README.md`, `INSTALL.md`,
+and `LICENSE`, install Inno Setup 6.5.4 and run:
+
+```powershell
+.\scripts\Build-Installer.ps1 -PackageDirectory 'F:\git\release-package'
+```
+
+The compiler can be selected with `-CompilerPath`; output defaults to
+`artifacts\installer\pdn-liquified-setup.exe`. Add `-Signed` only with already
+signed/timestamped DLLs and configured Azure signing credentials/profile variables.
+Inno's signing hook signs both the generated uninstaller and Setup during compilation.
+The helper requires PowerShell 7.2 or later; installing the resulting EXE does not.
+
+`tests\InnoInstaller.Tests.ps1` exercises an installer in an isolated directory.
+Run it only on an account without an existing wizard installation; it refuses to
+overwrite that installation's uninstall registration. Use `-TemporaryDirectory`
+to choose the smoke-test workspace.
 
 ## Architecture
 
