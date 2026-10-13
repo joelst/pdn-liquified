@@ -14,6 +14,7 @@ namespace DocumentRectifyPlugin;
 /// Rectifies perspective distortion by mapping a source quad to the full output rectangle.
 /// The effect performs local image processing only (no network or external I/O).
 /// </summary>
+[DistortionPlugins.EffectSupportInfo]
 internal sealed partial class DocumentRectifyEffect : GpuImageEffect<DocumentRectifyConfigToken>
 {
   private Guid sampleMapShaderID;
@@ -23,7 +24,8 @@ internal sealed partial class DocumentRectifyEffect : GpuImageEffect<DocumentRec
 
   public DocumentRectifyEffect()
       : base(
-          "Document Rectify",
+          "Doc Recitified",
+          DistortionPlugins.EffectMenuIcons.DocumentRectify,
           "Tools",
           GpuImageEffectOptions.Create() with
           {

@@ -14,6 +14,7 @@ namespace LiquifiedPlugin;
 /// GPU renderer for the shared CPU-generated inverse sample map. The original source
 /// image is sampled once; the map is uploaded as one float displacement texture.
 /// </summary>
+[DistortionPlugins.EffectSupportInfo]
 internal sealed partial class LiquifiedEffect : GpuImageEffect<LiquifiedConfigToken>
 {
     private Guid sampleMapShaderID;
@@ -26,6 +27,7 @@ internal sealed partial class LiquifiedEffect : GpuImageEffect<LiquifiedConfigTo
     public LiquifiedEffect()
         : base(
             "Liquified",
+            DistortionPlugins.EffectMenuIcons.Liquified,
             "Tools",
             GpuImageEffectOptions.Create() with { IsConfigurable = true })
     {

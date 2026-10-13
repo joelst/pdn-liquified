@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -20,19 +21,25 @@ namespace GridWarpPlugin;
 internal sealed class GridWarpConfigForm : EffectConfigForm2
 {
     // ── UI Controls ──────────────────────────────────────────
-    private TrackBar gridWidthSlider = null!;
-    private Label gridWidthValue = null!;
-    private TrackBar gridHeightSlider = null!;
-    private Label gridHeightValue = null!;
-    private TrackBar qualitySlider = null!;
-    private Label qualityValue = null!;
-    private Button toggleGridBtn = null!;
-    private FlowLayoutPanel gridColorSwatches = null!;
+    private ComboBox gridWidthCombo = null!;
+    private ComboBox gridHeightCombo = null!;
+    private ComboBox qualityCombo = null!;
+    private ComboBox gridColorCombo = null!;
+    private DistortionPlugins.GlyphButton showGridButton = null!;
     private Button undoBtn = null!, redoBtn = null!, resetBtn = null!;
     private Panel canvas = null!;
     private NumericUpDown pointX = null!, pointY = null!;
     private Label pointCoordinatesLabel = null!;
     private bool syncingPointCoordinates;
+    private bool[] frozenPoints = Array.Empty<bool>();
+    private int[] linkedGroups = Array.Empty<int>();
+    private readonly HashSet<int> selectedPoints = new();
+    private enum PointEditMode { Move, Freeze, Unfreeze, Link, Unlink }
+    private PointEditMode editMode;
+    private int linkAnchor = -1;
+    private readonly List<Button> modeButtons = new();
+    private Label modeStatus = null!;
+    private Button returnToMoveBtn = null!;
 
     // ── Canvas / interaction state ───────────────────────────
     private float zoom = 1f;
@@ -50,8 +57,9 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     private int selectedGridPointIndex;
 
     // ── Undo / redo ──────────────────────────────────────────
-    private readonly List<float[]> undoStack = new();
-    private readonly List<float[]> redoStack = new();
+    private sealed record GridSnapshot(float[] Displacements, bool[] FrozenPoints, int[] LinkedGroups);
+    private readonly List<GridSnapshot> undoStack = new();
+    private readonly List<GridSnapshot> redoStack = new();
     private const int MaximumUndoSteps = 256;
 
     // ── CPU preview surfaces ─────────────────────────────────
@@ -71,8 +79,6 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     private static readonly Color LabelColor = Color.FromArgb(220, 220, 220);
     private static readonly Color PanelBg = Color.FromArgb(45, 45, 48);
     private static readonly Color ControlBg = Color.FromArgb(60, 60, 65);
-    private readonly List<Button> gridColorButtons = new();
-    private readonly ToolTip gridColorToolTip = new();
     private readonly ToolTip uiToolTip = new();
 
     private sealed class GridColorPreset
@@ -103,7 +109,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     };
 
     private bool initialFitDone;
-    private bool suppressGridSliderEvents;
+    private bool suppressGridControlEvents;
     private float _dpi;
     private int S(int v) => (int)(v * _dpi);
 
@@ -136,7 +142,16 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         BuildUI();
         WireEvents();
         DpiChanged += (_, e) => RescaleForDpi(e.DeviceDpiOld, e.DeviceDpiNew);
+        ApplySuiteTheme();
     }
+
+    protected override void OnThemeConfigChanged()
+    {
+        base.OnThemeConfigChanged();
+        if (canvas is not null) ApplySuiteTheme();
+    }
+
+    private void ApplySuiteTheme() => DistortionPlugins.DialogUi.ApplyTheme(this, canvas, IsAppThemeDark);
 
     // ═════════════════════════════════════════════════════════
     //  Token integration
@@ -167,13 +182,24 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         else
             InitDisplacements(currentGridWidth, currentGridHeight);
 
+        int pointCount = (currentGridWidth + 1) * (currentGridHeight + 1);
+        frozenPoints = token.FrozenPoints?.Length == pointCount ? (bool[])token.FrozenPoints.Clone() : new bool[pointCount];
+        linkedGroups = new int[pointCount];
+        if (token.LinkedGroups?.Length == pointCount)
+            for (int i = 0; i < pointCount; i++)
+                linkedGroups[i] = token.LinkedGroups[i] > 0 && token.LinkedGroups[i] <= pointCount ? token.LinkedGroups[i] : 0;
+        NormalizeLinkGroups();
+        linkAnchor = -1;
+
         selectedGridPointIndex = Math.Min(selectedGridPointIndex,
             (currentGridWidth + 1) * (currentGridHeight + 1) - 1);
+        selectedPoints.Clear();
+        selectedPoints.Add(selectedGridPointIndex);
         undoStack.Clear();
         redoStack.Clear();
 
         // Guard: controls may not exist yet if called during base constructor
-        if (gridWidthSlider != null)
+        if (gridWidthCombo != null)
             SyncUIFromToken(token);
 
         SchedulePreview();
@@ -184,8 +210,10 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         var token = (GridWarpConfigToken)dstToken;
         token.GridWidth = currentGridWidth;
         token.GridHeight = currentGridHeight;
-        token.Quality = qualitySlider.Value;
+        token.Quality = qualityCombo.SelectedIndex + 1;
         token.Displacements = (float[])displacements.Clone();
+        token.FrozenPoints = (bool[])frozenPoints.Clone();
+        token.LinkedGroups = (int[])linkedGroups.Clone();
     }
 
     protected override void OnLoaded()
@@ -235,7 +263,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     {
         SuspendLayout();
 
-        Text = "Grid Warp \u2013 Ctrl+Page Up/Down selects points; Tab moves focus";
+        Text = "Grid Warpified \u2013 Ctrl+Page Up/Down selects points; Tab moves focus";
         ClientSize = new Size(S(1000), S(700));
         MinimumSize = new Size(S(600), S(400));
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -258,60 +286,6 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             BackColor = PanelBg
         };
 
-        (gridWidthSlider, gridWidthValue) = AddSlider(leftPanel, "Grid Width:", ctrlW, MinGrid, MaxGridWidth, 4, v => v.ToString());
-        (gridHeightSlider, gridHeightValue) = AddSlider(leftPanel, "Grid Height:", ctrlW, MinGrid, MaxGridHeight, 4, v => v.ToString());
-        leftPanel.Controls.Add(MakeHintLabel("Independent X/Y cells (e.g. 10x20), up to 50x50.", ctrlW));
-
-        (qualitySlider, qualityValue) = AddSlider(leftPanel, "Quality:", ctrlW, 1, 7, 4, v => $"{v}x");
-        leftPanel.Controls.Add(MakeHintLabel("RGSS multisampling level. Higher = smoother but slower.", ctrlW));
-
-        toggleGridBtn = MakeIconButton("\u25A6", "Show or hide the grid overlay");
-        toggleGridBtn.Margin = new Padding(0, S(6), 0, S(4));
-        leftPanel.Controls.Add(toggleGridBtn);
-
-        var gridColorLabel = new Label
-        {
-            Text = "Grid Color:",
-            AutoSize = true,
-            ForeColor = LabelColor,
-            Margin = new Padding(0, S(4), 0, 0)
-        };
-        leftPanel.Controls.Add(gridColorLabel);
-
-        gridColorSwatches = new FlowLayoutPanel
-        {
-            Width = ctrlW,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            WrapContents = false,
-            Margin = new Padding(0, S(2), 0, S(2)),
-            BackColor = Color.Transparent
-        };
-        for (int i = 0; i < GridColorPresets.Length; i++)
-        {
-            int index = i;
-            GridColorPreset preset = GridColorPresets[index];
-            var swatch = new Button
-            {
-                Size = new Size(S(28), S(28)),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(255, preset.GridLineColor.R, preset.GridLineColor.G, preset.GridLineColor.B),
-                Margin = new Padding(0, 0, S(6), 0),
-                Tag = index,
-                AccessibleName = $"{preset.Name} grid color",
-                AccessibleDescription = $"Use the {preset.Name.ToLowerInvariant()} color for the grid overlay."
-            };
-            swatch.FlatAppearance.BorderSize = 1;
-            swatch.FlatAppearance.BorderColor = Color.FromArgb(30, 30, 30);
-            swatch.Click += (_, _) => SelectGridColor(index);
-            gridColorToolTip.SetToolTip(swatch, preset.Name);
-            gridColorButtons.Add(swatch);
-            gridColorSwatches.Controls.Add(swatch);
-        }
-        leftPanel.Controls.Add(gridColorSwatches);
-        leftPanel.Controls.Add(MakeHintLabel("Hover color boxes for names.", ctrlW));
-        SelectGridColor(0);
-
         pointCoordinatesLabel = new Label
         {
             Text = "Selected point (image pixels):",
@@ -327,11 +301,15 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
         var helpLabel = new Label
         {
-            Text = "Left-click: drag control points\nRight-click: pan view\n" +
+            Text = "Left-click: drag control points\nCtrl+click: add/remove selected points\nRight-click: pan view\n" +
                    "Mouse wheel: zoom\nDouble-click: fit to window\n" +
                    "Ctrl+Page Up/Down: previous / next point\nTab / Shift+Tab: move focus\n" +
                    "Arrows: 1 pixel; Shift+arrows: 10 pixels\nF6: edit X/Y coordinates\n" +
-                   "Ctrl+Z / Ctrl+Y: undo / redo",
+                   "Ctrl+Z / Ctrl+Y: undo / redo\nCtrl+Shift+Page Up/Down: extend selection\n" +
+                   "Alt+1..5: Move / Freeze / Unfreeze / Link / Unlink\n" +
+                   "In constraint modes click points (or navigate and press Space); no dragging.\n" +
+                   "Link: click an anchor, then other points. Esc: return to Move.\n" +
+                   "Freeze fixes selected points; linked groups move together except frozen members.",
             AutoSize = true,
             MaximumSize = new Size(ctrlW, 0),
             ForeColor = LabelColor,
@@ -351,9 +329,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         };
         undoBtn = MakeIconButton("\u21B6", "Undo last grid edit");
         redoBtn = MakeIconButton("\u21B7", "Redo last undone edit");
-        resetBtn = MakeIconButton("\u21BA", "Reset all control-point displacements");
+        resetBtn = MakeIconButton("\u21BA", "Reset unfrozen control-point displacements; keep frozen positions and links");
         actionRow.Controls.AddRange(new Control[] { undoBtn, redoBtn, resetBtn });
-        leftPanel.Controls.Add(actionRow);
 
         // OK / Cancel row
         var okCancelRow = new FlowLayoutPanel
@@ -372,7 +349,6 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         cancelBtn.DialogResult = DialogResult.Cancel;
         cancelBtn.MinimumSize = new Size(S(90), cancelBtn.MinimumSize.Height);
         okCancelRow.Controls.AddRange(new Control[] { okBtn, cancelBtn });
-        leftPanel.Controls.Add(okCancelRow);
 
         AcceptButton = okBtn;
         CancelButton = cancelBtn;
@@ -390,6 +366,58 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
         Controls.Add(canvas);
         Controls.Add(leftPanel);
+        var topBar = DistortionPlugins.DialogUi.AddChrome(this, leftPanel, canvas, uiToolTip,
+            undoBtn, redoBtn, resetBtn, okBtn, cancelBtn);
+        var modes = new FlowLayoutPanel { Name = "pointModeBar", AutoSize = true, WrapContents = false, Margin = new Padding(S(4), 0, S(8), 0) };
+        foreach (PointEditMode mode in Enum.GetValues<PointEditMode>())
+        {
+            int shortcut = (int)mode + 1;
+            var group = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 0, S(4), 0) };
+            var button = DistortionPlugins.DialogUi.Icon(this, uiToolTip,
+                Enum.Parse<DistortionPlugins.UiGlyph>(mode.ToString()), $"{mode} mode (Alt+{shortcut})",
+                $"{mode} mode (Alt+{shortcut}). {GetModeHelp(mode)}");
+            button.Name = "pointMode" + mode;
+            button.Click += (_, _) => SetEditMode(mode);
+            modeButtons.Add(button);
+            group.Controls.Add(button);
+            group.Controls.Add(new Label { Text = mode.ToString(), AutoSize = true, Margin = Padding.Empty });
+            modes.Controls.Add(group);
+        }
+        topBar.Controls.Add(modes);
+        gridWidthCombo = AddTopDropdown(topBar, "Grid Width", S(100),
+            "Number of horizontal grid cells, from 2 to 50. Changing dimensions resets all displacements and clears undo/redo; choose the grid size before shaping the image.");
+        gridHeightCombo = AddTopDropdown(topBar, "Grid Height", S(100),
+            "Number of vertical grid cells, from 2 to 50. Width and height are independent. Changing dimensions resets all displacements and clears undo/redo.");
+        for (int value = MinGrid; value <= MaxGridWidth; value++) gridWidthCombo.Items.Add(value);
+        for (int value = MinGrid; value <= MaxGridHeight; value++) gridHeightCombo.Items.Add(value);
+        gridWidthCombo.SelectedIndex = currentGridWidth - MinGrid;
+        gridHeightCombo.SelectedIndex = currentGridHeight - MinGrid;
+        qualityCombo = AddTopDropdown(topBar, "Quality", S(90),
+            "RGSS multisampling quality for the final GPU render, from 1x to 7x. Higher values smooth edges but take longer. This does not change the CPU preview.");
+        for (int value = 1; value <= 7; value++) qualityCombo.Items.Add($"{value}x");
+        qualityCombo.SelectedIndex = 3;
+        gridColorCombo = AddTopDropdown(topBar, "Grid Color", S(110),
+            "Choose the grid-line and control-point overlay colors for contrast against your image. Overlay colors do not change the final image.");
+        gridColorCombo.Items.AddRange(GridColorPresets);
+        gridColorCombo.SelectedIndex = 0;
+        showGridButton = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.Grid,
+            "Hide grid", "Toggle grid lines and ordinary point handles. Frozen-point locks remain visible until unfrozen. This affects only the preview overlay, not the final output.");
+        showGridButton.Name = "showGridToggle";
+        showGridButton.Margin = new Padding(S(6), S(8), S(6), S(4));
+        topBar.Controls.Add(showGridButton);
+        SetGridVisible(true);
+        modeStatus = new Label { Name = "pointModeStatus", AutoSize = true, MaximumSize = new Size(S(310), 0), Margin = new Padding(S(6), S(8), S(8), S(4)) };
+        topBar.Controls.Add(modeStatus);
+        returnToMoveBtn = MakeButton("Move (Esc)");
+        returnToMoveBtn.Name = "returnToMove";
+        returnToMoveBtn.AccessibleName = "Return to Move mode";
+        returnToMoveBtn.Margin = new Padding(0, S(8), S(4), S(4));
+        uiToolTip.SetToolTip(returnToMoveBtn, "End the current constraint mode and return to moving points (Esc).");
+        returnToMoveBtn.Click += (_, _) => SetEditMode(PointEditMode.Move);
+        topBar.Controls.Add(returnToMoveBtn);
+        SetEditMode(PointEditMode.Move);
+        actionRow.Dispose();
+        okCancelRow.Dispose();
 
         ResumeLayout(true);
     }
@@ -400,40 +428,30 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
     private void WireEvents()
     {
-        uiToolTip.SetToolTip(gridWidthSlider, "Number of horizontal grid cells");
-        uiToolTip.SetToolTip(gridHeightSlider, "Number of vertical grid cells");
-        uiToolTip.SetToolTip(qualitySlider, "RGSS sample quality for final render");
         uiToolTip.SetToolTip(canvas, "Left-click or Ctrl+Page Up/Down selects a control point. Tab/Shift+Tab moves focus out of the canvas; F6 edits coordinates. Arrow keys move the point; Shift+arrows move 10 image pixels. Right-click drag to pan; wheel to zoom.");
 
-        gridWidthSlider.ValueChanged += (_, _) =>
+        gridWidthCombo.SelectedIndexChanged += (_, _) =>
         {
-            if (suppressGridSliderEvents)
+            if (suppressGridControlEvents)
                 return;
 
-            ApplyGridSliderChange(preferWidth: true);
+            ApplyGridDimensions();
         };
 
-        gridHeightSlider.ValueChanged += (_, _) =>
+        gridHeightCombo.SelectedIndexChanged += (_, _) =>
         {
-            if (suppressGridSliderEvents)
+            if (suppressGridControlEvents)
                 return;
 
-            ApplyGridSliderChange(preferWidth: false);
+            ApplyGridDimensions();
         };
 
-        qualitySlider.ValueChanged += (_, _) =>
+        qualityCombo.SelectedIndexChanged += (_, _) =>
         {
-            qualityValue.Text = $"{qualitySlider.Value}x";
-            PushUpdate();
+            if (!suppressGridControlEvents) PushUpdate();
         };
-
-        toggleGridBtn.Click += (_, _) =>
-        {
-            isGridVisible = !isGridVisible;
-            toggleGridBtn.Text = isGridVisible ? "\u25A6" : "\u25A1";
-            uiToolTip.SetToolTip(toggleGridBtn, isGridVisible ? "Hide grid overlay" : "Show grid overlay");
-            canvas?.Invalidate();
-        };
+        gridColorCombo.SelectedIndexChanged += (_, _) => SelectGridColor(gridColorCombo.SelectedIndex);
+        showGridButton.Click += (_, _) => SetGridVisible(!isGridVisible);
 
         undoBtn.Click += (_, _) => Undo();
         redoBtn.Click += (_, _) => Redo();
@@ -500,6 +518,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         // Grid overlay
         if (isGridVisible) DrawGridOverlay(g);
         else DrawSelectedPointFocus(g);
+        DrawFrozenPoints(g);
     }
 
     private void DrawGridOverlay(Graphics g)
@@ -547,6 +566,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             }
         }
 
+        DrawLinkedConnections(g, ptsX, cellW, cellH);
+
         // Draw control points
         float ptRadius = 4f;
         using var fillBrush = new SolidBrush(gridColorPreset.PointColor);
@@ -566,12 +587,44 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
                 g.FillEllipse(brush, sp.X - r, sp.Y - r, r * 2, r * 2);
                 g.DrawEllipse(outlinePen, sp.X - r, sp.Y - r, r * 2, r * 2);
                 g.DrawEllipse(contrastOutlinePen, sp.X - r + 1, sp.Y - r + 1, (r * 2) - 2, (r * 2) - 2);
-                if (idx == selectedGridPointIndex)
+                if (linkedGroups[idx] > 0)
+                {
+                    g.DrawRectangle(outlinePen, sp.X - r - 2, sp.Y - r - 2, r * 2 + 4, r * 2 + 4);
+                    g.DrawRectangle(contrastOutlinePen, sp.X - r - 2, sp.Y - r - 2, r * 2 + 4, r * 2 + 4);
+                }
+                if (selectedPoints.Contains(idx))
                 {
                     using var focusPen = new Pen(Color.White, 2f) { DashStyle = DashStyle.Dash };
                     g.DrawEllipse(focusPen, sp.X - r - 4, sp.Y - r - 4, r * 2 + 8, r * 2 + 8);
                 }
             }
+        }
+    }
+
+    private void DrawFrozenPoints(Graphics g)
+    {
+        if (origSurface == null) return;
+        int pointsPerRow = currentGridWidth + 1;
+        float cellW = (float)origSurface.Width / currentGridWidth;
+        float cellH = (float)origSurface.Height / currentGridHeight;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var fill = new SolidBrush(DistortionPlugins.DialogUi.FreezeColor);
+        using var key = new Pen(SystemInformation.HighContrast ? SystemColors.HighlightText : Color.Black, S(2));
+        using var halo = new Pen(Color.Black, S(5)) { LineJoin = LineJoin.Round };
+        using var contrast = new Pen(Color.White, S(3)) { LineJoin = LineJoin.Round };
+        using var accent = new Pen(fill.Color, S(1)) { LineJoin = LineJoin.Round };
+        for (int index = 0; index < frozenPoints.Length; index++)
+        {
+            if (!frozenPoints[index]) continue;
+            PointF point = GetDeformedScreenPos(index / pointsPerRow, index % pointsPerRow, pointsPerRow, cellW, cellH);
+            var body = new RectangleF(point.X - S(6), point.Y - S(2), S(12), S(10));
+            foreach (Pen pen in new[] { halo, contrast, accent })
+            {
+                g.DrawArc(pen, point.X - S(4), point.Y - S(10), S(8), S(14), 180, 180);
+                g.DrawRectangle(pen, body.X, body.Y, body.Width, body.Height);
+            }
+            g.FillRectangle(fill, body);
+            g.DrawLine(key, point.X, point.Y + S(1), point.X, point.Y + S(5));
         }
     }
 
@@ -588,6 +641,60 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         using var focus = new Pen(Color.White, 2f) { DashStyle = DashStyle.Dash };
         g.DrawEllipse(halo, point.X - 10, point.Y - 10, 20, 20);
         g.DrawEllipse(focus, point.X - 10, point.Y - 10, 20, 20);
+    }
+
+    private IEnumerable<(int From, int To)> GetLinkedConnections()
+    {
+        int pointsPerRow = currentGridWidth + 1;
+        int[] parents = Enumerable.Range(0, linkedGroups.Length).ToArray();
+        int Root(int index)
+        {
+            while (parents[index] != index)
+            {
+                parents[index] = parents[parents[index]];
+                index = parents[index];
+            }
+            return index;
+        }
+        for (int index = 0; index < linkedGroups.Length; index++)
+        {
+            if (linkedGroups[index] <= 0) continue;
+            foreach (int neighbor in new[] { index % pointsPerRow < pointsPerRow - 1 ? index + 1 : -1, index + pointsPerRow })
+            {
+                if (neighbor < 0 || neighbor >= linkedGroups.Length || linkedGroups[index] != linkedGroups[neighbor]) continue;
+                parents[Root(neighbor)] = Root(index);
+                yield return (index, neighbor);
+            }
+        }
+        var previous = new Dictionary<int, int>();
+        for (int index = 0; index < linkedGroups.Length; index++)
+        {
+            int group = linkedGroups[index];
+            if (group <= 0) continue;
+            if (previous.TryGetValue(group, out int from) && Root(from) != Root(index))
+            {
+                parents[Root(index)] = Root(from);
+                yield return (from, index);
+            }
+            previous[group] = index;
+        }
+    }
+
+    private void DrawLinkedConnections(Graphics g, int pointsPerRow, float cellW, float cellH)
+    {
+        // Solid black/white outlines and a dashed accent remain distinct from every grid preset.
+        using var halo = new Pen(Color.Black, S(7));
+        using var contrast = new Pen(Color.White, S(5));
+        using var accent = new Pen(SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(205, 0, 130), S(3))
+        { DashStyle = DashStyle.Dash };
+        foreach (var (from, to) in GetLinkedConnections())
+        {
+            PointF start = GetDeformedScreenPos(from / pointsPerRow, from % pointsPerRow, pointsPerRow, cellW, cellH);
+            PointF end = GetDeformedScreenPos(to / pointsPerRow, to % pointsPerRow, pointsPerRow, cellW, cellH);
+            g.DrawLine(halo, start, end);
+            g.DrawLine(contrast, start, end);
+            g.DrawLine(accent, start, end);
+        }
     }
 
     private PointF GetDeformedScreenPos(int row, int col, int pointsPerRow, float cellW, float cellH)
@@ -611,7 +718,25 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             int hitIdx = HitTestControlPoint(e.Location);
             if (hitIdx >= 0)
             {
+                if (editMode != PointEditMode.Move)
+                {
+                    ApplyModeToPoint(hitIdx);
+                    return;
+                }
+                if ((ModifierKeys & Keys.Control) != 0)
+                {
+                    if (!selectedPoints.Add(hitIdx)) selectedPoints.Remove(hitIdx);
+                    if (selectedPoints.Count == 0) selectedPoints.Add(hitIdx);
+                    SelectGridPoint(selectedPoints.Contains(hitIdx) ? hitIdx : selectedPoints.First());
+                    return;
+                }
+                if (!selectedPoints.Contains(hitIdx))
+                {
+                    selectedPoints.Clear();
+                    selectedPoints.Add(hitIdx);
+                }
                 SelectGridPoint(hitIdx);
+                if (frozenPoints[hitIdx]) return;
                 dragPointIndex = hitIdx;
                 // Save undo snapshot before starting drag
                 RecordUndo();
@@ -628,7 +753,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
     private void Canvas_MouseMove(object? sender, MouseEventArgs e)
     {
-        if (dragPointIndex >= 0 && e.Button == MouseButtons.Left && origSurface != null)
+        if (editMode == PointEditMode.Move && dragPointIndex >= 0 && e.Button == MouseButtons.Left && origSurface != null)
         {
             var imgPt = ScreenToImage(e.Location);
             int ptsX = currentGridWidth + 1;
@@ -639,8 +764,9 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             float defaultX = col * cellW;
             float defaultY = row * cellH;
 
-            displacements[dragPointIndex * 2] = imgPt.X - defaultX;
-            displacements[dragPointIndex * 2 + 1] = imgPt.Y - defaultY;
+            MovePointGroup(dragPointIndex,
+                imgPt.X - defaultX - displacements[dragPointIndex * 2],
+                imgPt.Y - defaultY - displacements[dragPointIndex * 2 + 1]);
 
             SelectGridPoint(dragPointIndex);
             SchedulePreview();
@@ -667,7 +793,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         else if (isPanning && e.Button == MouseButtons.Right)
         {
             isPanning = false;
-            canvas.Cursor = Cursors.Default;
+            canvas.Cursor = editMode == PointEditMode.Move ? Cursors.Default : Cursors.Cross;
         }
     }
 
@@ -686,6 +812,12 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
     private void Canvas_KeyDown(object? sender, KeyEventArgs e)
     {
+        if (editMode != PointEditMode.Move && e.KeyCode is Keys.Space or Keys.Enter)
+        {
+            ApplyModeToPoint(selectedGridPointIndex);
+            e.SuppressKeyPress = true;
+            return;
+        }
         if (e.KeyCode == Keys.F6)
         {
             pointX.Focus();
@@ -696,7 +828,10 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         if (e.Control && e.KeyCode is Keys.PageDown or Keys.PageUp)
         {
             int direction = e.KeyCode == Keys.PageUp ? -1 : 1;
-            SelectGridPoint((selectedGridPointIndex + direction + pointCount) % pointCount);
+            int index = (selectedGridPointIndex + direction + pointCount) % pointCount;
+            if (!e.Shift) selectedPoints.Clear();
+            selectedPoints.Add(index);
+            SelectGridPoint(index);
             e.Handled = true;
             e.SuppressKeyPress = true;
             return;
@@ -704,7 +839,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
         if (e.KeyCode is Keys.Left or Keys.Right or Keys.Up or Keys.Down)
         {
-            NudgeSelectedGridPoint(e.KeyCode, e.Shift ? 10f : 1f);
+            if (editMode == PointEditMode.Move) NudgeSelectedGridPoint(e.KeyCode, e.Shift ? 10f : 1f);
             e.Handled = true;
             e.SuppressKeyPress = true;
         }
@@ -722,21 +857,21 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         float x = col * cellW + displacements[selectedGridPointIndex * 2];
         float y = row * cellH + displacements[selectedGridPointIndex * 2 + 1];
         SyncPointCoordinates(x, y, row, col);
-        canvas.AccessibleDescription = $"Selected control point, row {row + 1}, column {col + 1}, image coordinates {x:0.##}, {y:0.##}. Ctrl+Page Up/Down selects another point. Use arrow keys to move; hold Shift for 10-pixel steps. Tab or Shift+Tab leaves the canvas; F6 focuses the X coordinate editor.";
+        canvas.AccessibleDescription = $"Selected control point, row {row + 1}, column {col + 1}, image coordinates {x:0.##}, {y:0.##}. {(frozenPoints[selectedGridPointIndex] ? "Frozen." : "Unfrozen.")} Link group {linkedGroups[selectedGridPointIndex]}; {selectedPoints.Count} selected points. Ctrl+Page Up/Down selects another point; add Shift to extend selection. Ctrl+click adds/removes points. Use arrow keys to move; hold Shift for 10-pixel steps. Tab or Shift+Tab leaves the canvas; F6 focuses the X coordinate editor.";
+        UpdateButtons();
         canvas.Invalidate();
     }
 
     private void NudgeSelectedGridPoint(Keys key, float amount)
     {
-        if (origSurface == null) return;
+        if (origSurface == null || frozenPoints[selectedGridPointIndex]) return;
         RecordUndo();
-        int offset = selectedGridPointIndex * 2;
         switch (key)
         {
-            case Keys.Left: displacements[offset] -= amount; break;
-            case Keys.Right: displacements[offset] += amount; break;
-            case Keys.Up: displacements[offset + 1] -= amount; break;
-            case Keys.Down: displacements[offset + 1] += amount; break;
+            case Keys.Left: MovePointGroup(selectedGridPointIndex, -amount, 0); break;
+            case Keys.Right: MovePointGroup(selectedGridPointIndex, amount, 0); break;
+            case Keys.Up: MovePointGroup(selectedGridPointIndex, 0, -amount); break;
+            case Keys.Down: MovePointGroup(selectedGridPointIndex, 0, amount); break;
         }
 
         SelectGridPoint(selectedGridPointIndex);
@@ -779,11 +914,176 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     //  Undo / Redo / Reset
     // ═════════════════════════════════════════════════════════
 
-    private void AddHistorySnapshot(List<float[]> history)
+    private void MovePointGroup(int index, float dx, float dy)
+    {
+        if (frozenPoints[index]) return;
+        int group = linkedGroups[index];
+        for (int i = 0; i < frozenPoints.Length; i++)
+        {
+            if (frozenPoints[i] || (i != index && (group == 0 || linkedGroups[i] != group))) continue;
+            displacements[i * 2] += dx;
+            displacements[i * 2 + 1] += dy;
+        }
+    }
+
+    private static string GetModeHelp(PointEditMode mode) => mode switch
+    {
+        PointEditMode.Move => "Drag or nudge points. Ctrl+click selects multiple points.",
+        PointEditMode.Freeze => "Click points to lock their positions without moving them.",
+        PointEditMode.Unfreeze => "Click points to unlock their positions without moving them.",
+        PointEditMode.Link => "Click the first point to choose an anchor. Then click points to join its group. Click Link again for a new group.",
+        _ => "Click points to detach them from their groups without moving them."
+    };
+
+    private void SetEditMode(PointEditMode mode)
+    {
+        if (dragPointIndex >= 0)
+        {
+            dragPointIndex = -1;
+            PushUpdate();
+        }
+        editMode = mode;
+        linkAnchor = -1;
+        foreach (Button button in modeButtons)
+        {
+            bool selected = button == modeButtons[(int)mode];
+            button.FlatAppearance.BorderSize = selected ? 3 : 1;
+            ((DistortionPlugins.GlyphButton)button).IsSelected = selected;
+            button.AccessibleDescription = button.AccessibleName + (selected ? ". Selected. " : ". ") + GetModeHelp((PointEditMode)modeButtons.IndexOf(button));
+            button.Invalidate();
+        }
+        canvas.Cursor = mode == PointEditMode.Move ? Cursors.Default : Cursors.Cross;
+        UpdateModeStatus();
+        returnToMoveBtn.Enabled = mode != PointEditMode.Move;
+        ApplySuiteTheme();
+        if (mode != PointEditMode.Move) SetGridVisible(true);
+        if (displacements.Length > 0) SelectGridPoint(selectedGridPointIndex);
+    }
+
+    private void ApplyModeToPoint(int index)
+    {
+        selectedPoints.Clear();
+        selectedPoints.Add(index);
+        SelectGridPoint(index);
+        switch (editMode)
+        {
+            case PointEditMode.Freeze: SetSelectedFrozen(true); break;
+            case PointEditMode.Unfreeze: SetSelectedFrozen(false); break;
+            case PointEditMode.Unlink: UnlinkSelectedPoints(); break;
+            case PointEditMode.Link:
+                if (linkAnchor < 0)
+                {
+                    linkAnchor = index;
+                    UpdateModeStatus();
+                }
+                else
+                {
+                    selectedPoints.Add(linkAnchor);
+                    LinkSelectedPoints();
+                    SelectGridPoint(index);
+                    UpdateModeStatus();
+                }
+                break;
+        }
+    }
+
+    private void SetGridVisible(bool visible)
+    {
+        isGridVisible = visible;
+        showGridButton.IsSelected = visible;
+        showGridButton.AccessibleName = visible ? "Hide grid" : "Show grid";
+        showGridButton.AccessibleDescription = $"Grid {(visible ? "visible" : "hidden")}. Toggle grid lines and ordinary handles; frozen-point locks remain visible. Preview only.";
+        uiToolTip.SetToolTip(showGridButton, showGridButton.AccessibleName + ". " + showGridButton.AccessibleDescription);
+        ApplySuiteTheme();
+        canvas.Invalidate();
+    }
+
+    private string GetLinkStatus() =>
+        $"Link: anchor row {linkAnchor / (currentGridWidth + 1) + 1}, column {linkAnchor % (currentGridWidth + 1) + 1}. Click points to join; click Link again for a new group.";
+
+    private void UpdateModeStatus()
+    {
+        bool active = editMode != PointEditMode.Move;
+        modeStatus.Tag = active;
+        modeStatus.Padding = new Padding(S(6));
+        modeStatus.Text = active
+            ? $"{editMode.ToString().ToUpperInvariant()} MODE - Esc returns to Move. " +
+                (editMode == PointEditMode.Link && linkAnchor >= 0 ? GetLinkStatus() : GetModeHelp(editMode))
+            : $"Move: {GetModeHelp(editMode)}";
+        modeStatus.AccessibleDescription = modeStatus.Text;
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData >= (Keys.Alt | Keys.D1) && keyData <= (Keys.Alt | Keys.D5))
+        {
+            SetEditMode((PointEditMode)((int)(keyData & Keys.KeyCode) - (int)Keys.D1));
+            return true;
+        }
+        if (keyData == Keys.Escape && editMode != PointEditMode.Move)
+        {
+            SetEditMode(PointEditMode.Move);
+            return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    private void SetSelectedFrozen(bool frozen)
+    {
+        if (!selectedPoints.Any(index => frozenPoints[index] != frozen)) return;
+        RecordUndo();
+        foreach (int index in selectedPoints) frozenPoints[index] = frozen;
+        SelectGridPoint(selectedGridPointIndex);
+        PushUpdate();
+    }
+
+    private void LinkSelectedPoints()
+    {
+        if (selectedPoints.Count < 2) return;
+        var existingGroups = selectedPoints.Select(index => linkedGroups[index]).Where(group => group > 0).ToHashSet();
+        var members = Enumerable.Range(0, linkedGroups.Length)
+            .Where(index => selectedPoints.Contains(index) || existingGroups.Contains(linkedGroups[index])).ToArray();
+        int group = members.Min() + 1;
+        if (members.All(index => linkedGroups[index] == group)) return;
+        RecordUndo();
+        foreach (int index in members) linkedGroups[index] = group;
+        SelectGridPoint(selectedGridPointIndex);
+        PushUpdate();
+    }
+
+    private void UnlinkSelectedPoints()
+    {
+        if (!selectedPoints.Any(index => linkedGroups[index] > 0)) return;
+        RecordUndo();
+        foreach (int index in selectedPoints) linkedGroups[index] = 0;
+        NormalizeLinkGroups();
+        SelectGridPoint(selectedGridPointIndex);
+        PushUpdate();
+    }
+
+    private void NormalizeLinkGroups()
+    {
+        // Reassign remaining groups by their first member so new groups cannot reuse an existing ID.
+        foreach (var group in Enumerable.Range(0, linkedGroups.Length)
+            .Where(index => linkedGroups[index] > 0).GroupBy(index => linkedGroups[index]).Select(group => group.ToArray()).ToArray())
+        {
+            int id = group.Length > 1 ? group.Min() + 1 : 0;
+            foreach (int index in group) linkedGroups[index] = id;
+        }
+    }
+
+    private void RestoreSnapshot(GridSnapshot snapshot)
+    {
+        displacements = snapshot.Displacements;
+        frozenPoints = snapshot.FrozenPoints;
+        linkedGroups = snapshot.LinkedGroups;
+    }
+
+    private void AddHistorySnapshot(List<GridSnapshot> history)
     {
         if (history.Count >= MaximumUndoSteps)
             history.RemoveAt(0);
-        history.Add((float[])displacements.Clone());
+        history.Add(new GridSnapshot((float[])displacements.Clone(), (bool[])frozenPoints.Clone(), (int[])linkedGroups.Clone()));
     }
 
     private void RecordUndo()
@@ -796,7 +1096,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     {
         if (undoStack.Count == 0) return;
         AddHistorySnapshot(redoStack);
-        displacements = undoStack[^1];
+        RestoreSnapshot(undoStack[^1]);
         undoStack.RemoveAt(undoStack.Count - 1);
         SelectGridPoint(selectedGridPointIndex);
         SchedulePreview();
@@ -808,7 +1108,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     {
         if (redoStack.Count == 0) return;
         AddHistorySnapshot(undoStack);
-        displacements = redoStack[^1];
+        RestoreSnapshot(redoStack[^1]);
         redoStack.RemoveAt(redoStack.Count - 1);
         SelectGridPoint(selectedGridPointIndex);
         SchedulePreview();
@@ -819,7 +1119,8 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     private void ResetGrid()
     {
         RecordUndo();
-        InitDisplacements(currentGridWidth, currentGridHeight);
+        for (int i = 0; i < frozenPoints.Length; i++)
+            if (!frozenPoints[i]) displacements[i * 2] = displacements[i * 2 + 1] = 0;
         SelectGridPoint(selectedGridPointIndex);
         SchedulePreview();
         UpdateButtons();
@@ -1063,6 +1364,11 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     {
         int count = (gridWidth + 1) * (gridHeight + 1) * 2;
         displacements = new float[count];
+        frozenPoints = new bool[count / 2];
+        linkedGroups = new int[count / 2];
+        selectedPoints.Clear();
+        selectedPoints.Add(Math.Clamp(selectedGridPointIndex, 0, count / 2 - 1));
+        linkAnchor = -1;
     }
 
     // ═════════════════════════════════════════════════════════
@@ -1106,28 +1412,16 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         UpdateTokenFromDialog();
     }
 
-    private void ApplyGridSliderChange(bool preferWidth)
+    private void ApplyGridDimensions()
     {
-        int requestedWidth = gridWidthSlider.Value;
-        int requestedHeight = gridHeightSlider.Value;
+        int requestedWidth = gridWidthCombo.SelectedIndex + MinGrid;
+        int requestedHeight = gridHeightCombo.SelectedIndex + MinGrid;
 
         if (requestedWidth == currentGridWidth && requestedHeight == currentGridHeight)
-        {
-            gridWidthValue.Text = requestedWidth.ToString();
-            gridHeightValue.Text = requestedHeight.ToString();
             return;
-        }
 
         currentGridWidth = requestedWidth;
         currentGridHeight = requestedHeight;
-
-        suppressGridSliderEvents = true;
-        gridWidthSlider.Value = currentGridWidth;
-        gridHeightSlider.Value = currentGridHeight;
-        suppressGridSliderEvents = false;
-
-        gridWidthValue.Text = currentGridWidth.ToString();
-        gridHeightValue.Text = currentGridHeight.ToString();
 
         InitDisplacements(currentGridWidth, currentGridHeight);
         SelectGridPoint(Math.Min(selectedGridPointIndex,
@@ -1150,14 +1444,6 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
     private void SelectGridColor(int index)
     {
         selectedGridColorIndex = Math.Clamp(index, 0, GridColorPresets.Length - 1);
-
-        for (int i = 0; i < gridColorButtons.Count; i++)
-        {
-            Button swatch = gridColorButtons[i];
-            bool isSelected = i == selectedGridColorIndex;
-            swatch.FlatAppearance.BorderSize = isSelected ? 3 : 1;
-            swatch.FlatAppearance.BorderColor = isSelected ? Color.White : Color.FromArgb(30, 30, 30);
-        }
 
         canvas?.Invalidate();
     }
@@ -1204,14 +1490,17 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
     private void SyncUIFromToken(GridWarpConfigToken token)
     {
-        suppressGridSliderEvents = true;
-        gridWidthSlider.Value = currentGridWidth;
-        gridHeightSlider.Value = currentGridHeight;
-        suppressGridSliderEvents = false;
-        qualitySlider.Value = Math.Clamp(token.Quality, qualitySlider.Minimum, qualitySlider.Maximum);
-        gridWidthValue.Text = currentGridWidth.ToString();
-        gridHeightValue.Text = currentGridHeight.ToString();
-        qualityValue.Text = $"{qualitySlider.Value}x";
+        suppressGridControlEvents = true;
+        try
+        {
+            gridWidthCombo.SelectedIndex = currentGridWidth - MinGrid;
+            gridHeightCombo.SelectedIndex = currentGridHeight - MinGrid;
+            qualityCombo.SelectedIndex = Math.Clamp(token.Quality, 1, 7) - 1;
+        }
+        finally
+        {
+            suppressGridControlEvents = false;
+        }
         SelectGridPoint(selectedGridPointIndex);
         UpdateButtons();
     }
@@ -1270,8 +1559,9 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         {
             pointX.Value = (decimal)Math.Clamp(x, (float)pointX.Minimum, (float)pointX.Maximum);
             pointY.Value = (decimal)Math.Clamp(y, (float)pointY.Minimum, (float)pointY.Maximum);
-            pointX.Enabled = pointY.Enabled = origSurface != null;
-            pointCoordinatesLabel.Text = $"Point row {row + 1}, column {col + 1} (pixels):";
+            pointX.Enabled = pointY.Enabled = editMode == PointEditMode.Move && origSurface != null && !frozenPoints[selectedGridPointIndex];
+            pointCoordinatesLabel.Text = $"Point row {row + 1}, column {col + 1} (pixels); " +
+                $"{selectedPoints.Count} selected; {(frozenPoints[selectedGridPointIndex] ? "frozen" : "unfrozen")}; link {linkedGroups[selectedGridPointIndex]}";
         }
         finally
         {
@@ -1281,7 +1571,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
     private void ApplyPointCoordinates(bool editX)
     {
-        if (syncingPointCoordinates || origSurface == null) return;
+        if (editMode != PointEditMode.Move || syncingPointCoordinates || origSurface == null || frozenPoints[selectedGridPointIndex]) return;
         int pointsPerRow = currentGridWidth + 1;
         int row = selectedGridPointIndex / pointsPerRow;
         int col = selectedGridPointIndex % pointsPerRow;
@@ -1290,8 +1580,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         float dy = editX ? displacements[offset + 1] : (float)pointY.Value - row * ((float)origSurface.Height / currentGridHeight);
         if (dx == displacements[offset] && dy == displacements[offset + 1]) return;
         RecordUndo();
-        displacements[offset] = dx;
-        displacements[offset + 1] = dy;
+        MovePointGroup(selectedGridPointIndex, dx - displacements[offset], dy - displacements[offset + 1]);
         SelectGridPoint(selectedGridPointIndex);
         UpdateButtons();
         SchedulePreview();
@@ -1316,75 +1605,39 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
     private Button MakeIconButton(string icon, string tooltip)
     {
-        Button btn = MakeButton(icon);
-        btn.MinimumSize = new Size(S(34), S(30));
-        btn.Padding = new Padding(S(6), S(2), S(6), S(2));
-        btn.AccessibleName = tooltip;
-        btn.AccessibleDescription = tooltip;
-        uiToolTip.SetToolTip(btn, tooltip);
-        return btn;
+        var glyph = icon switch
+        {
+            "\u21B6" => DistortionPlugins.UiGlyph.Undo,
+            "\u21B7" => DistortionPlugins.UiGlyph.Redo,
+            "\u21BA" => DistortionPlugins.UiGlyph.Reset,
+            _ => DistortionPlugins.UiGlyph.Grid
+        };
+        return DistortionPlugins.DialogUi.Icon(this, uiToolTip, glyph, tooltip, tooltip);
     }
 
-    private (TrackBar slider, Label valueLabel) AddSlider(
-        FlowLayoutPanel parent, string label, int ctrlW, int min, int max, int val, Func<int, string> fmt)
+    private ComboBox AddTopDropdown(FlowLayoutPanel topBar, string caption, int width, string description)
     {
-        int rowH = S(22);
-        int valW = S(80);
-        var row = new Panel
+        var group = new FlowLayoutPanel
         {
-            Width = ctrlW,
-            Height = rowH,
-            Margin = new Padding(0, S(4), 0, 0),
-            BackColor = Color.Transparent
+            AutoSize = true, FlowDirection = FlowDirection.TopDown,
+            WrapContents = false, Margin = new Padding(S(4), 0, S(4), 0)
         };
         var nameLabel = new Label
         {
-            Text = label,
-            AutoSize = true,
-            ForeColor = LabelColor,
-            Location = Point.Empty
+            Text = caption, AutoSize = true, Margin = Padding.Empty
         };
-        row.Controls.Add(nameLabel);
-        var valLabel = new Label
+        var combo = new ComboBox
         {
-            Text = fmt(val),
-            AutoSize = false,
-            Size = new Size(valW, rowH),
-            ForeColor = LabelColor,
-            TextAlign = ContentAlignment.TopRight,
-            Location = new Point(ctrlW - valW, 0)
+            Width = width, DropDownStyle = ComboBoxStyle.DropDownList,
+            AccessibleName = caption, AccessibleDescription = description,
+            Margin = Padding.Empty, IntegralHeight = true, MaxDropDownItems = 12
         };
-        row.Controls.Add(valLabel);
-        parent.Controls.Add(row);
-
-        var tb = new TrackBar
-        {
-            Width = ctrlW,
-            Minimum = min,
-            Maximum = max,
-            Value = val,
-            TickFrequency = Math.Max(1, (max - min) / 10),
-            SmallChange = 1,
-            LargeChange = Math.Max(1, (max - min) / 4),
-            BackColor = PanelBg,
-            Margin = new Padding(0, 0, 0, S(2)),
-            AccessibleName = label.TrimEnd(':'),
-            AccessibleDescription = $"{label.TrimEnd(':')}. Use the arrow keys to change the value."
-        };
-        parent.Controls.Add(tb);
-
-        return (tb, valLabel);
+        group.Controls.Add(nameLabel);
+        group.Controls.Add(combo);
+        topBar.Controls.Add(group);
+        DistortionPlugins.DialogUi.AddControlInfo(this, combo, uiToolTip, description);
+        return combo;
     }
-
-    private Label MakeHintLabel(string text, int maxW) => new Label
-    {
-        Text = text,
-        AutoSize = true,
-        MaximumSize = new Size(maxW, 0),
-        ForeColor = Color.FromArgb(160, 170, 180),
-        Font = new Font(Font.FontFamily, Font.Size * 0.9f, FontStyle.Italic),
-        Margin = new Padding(0, 0, 0, S(2))
-    };
 
     // ═════════════════════════════════════════════════════════
     //  Cleanup
@@ -1414,7 +1667,6 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
             origSurface?.Dispose();
             workSurface?.Dispose();
             uiToolTip.Dispose();
-            gridColorToolTip.Dispose();
         }
         base.OnDispose(disposing);
     }

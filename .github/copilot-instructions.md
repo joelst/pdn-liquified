@@ -1,6 +1,6 @@
 # Copilot Instructions — pdn-liquified
 
-Paint.NET 5.x plugins providing GPU-accelerated distortion effects via ComputeSharp D2D1: brush-based Liquified, mesh-based Grid Warp, and Document Rectify.
+Paint.NET 5.x plugins providing GPU-accelerated distortion effects via ComputeSharp D2D1: brush-based Liquified, mesh-based Grid Warpified, and Doc Recitified. Display branding differs from the unchanged GridWarp/DocumentRectify project, namespace, and DLL identities.
 
 ## Build
 
@@ -22,7 +22,7 @@ The Inno Setup installer is defined in `installer\DistortionPlugins.iss`.
 `-Signed` requires signed DLLs and signs Setup/Uninstall with the existing Azure profile.
 `tests\InnoInstaller.Tests.ps1` installs/upgrades/uninstalls in an isolated destination;
 it refuses to run if a real wizard installation is already registered.
-Also verify in Paint.NET (**Effects > Tools > Liquified**, **Grid Warp**, and **Document Rectify**):
+Also verify in Paint.NET (**Effects > Tools > Liquified**, **Grid Warpified**, and **Doc Recitified**):
 automated checks do not validate live GPU rendering, pen hardware, or mixed-DPI interaction.
 
 ## Architecture
@@ -40,6 +40,9 @@ automated checks do not validate live GPU rendering, pen hardware, or mixed-DPI 
 | `DocumentRectify/DocumentRectifyEffect.cs` | `GpuImageEffect<DocumentRectifyConfigToken>` with `DocumentRectifySampleMapShader` — homography-based perspective rectification. |
 | `DocumentRectify/DocumentRectifyConfigForm.cs` | Interactive `EffectConfigForm2` dialog — draggable corners, auto-detect, aspect controls, CPU preview. |
 | `DocumentRectify/DocumentRectifyConfigToken.cs` | `EffectConfigToken` — corner coordinates, quality, and aspect settings. |
+| `DialogUi.cs` | Shared theme-aware icons, information controls, collapse controls, and dialog actions. |
+| `EffectSupportInfo.cs` | Shared Paint.NET menu-hover support metadata derived from assembly attributes. |
+| `Liquified/LiquifiedPreferences.cs` | Local JSON last-used/default brush and display preferences, excluding image edits. |
 | `paintdotnet_src/` | Decompiled Paint.NET reference code. **Excluded from compilation.** Read-only reference. |
 
 ## Key patterns
@@ -48,9 +51,10 @@ automated checks do not validate live GPU rendering, pen hardware, or mixed-DPI 
 - **10 liquified brush modes:** ForwardWarp, Pucker, Bloat, TwistCW, TwistCCW, PushLeft, Reconstruct, Turbulence, Freeze, Unfreeze.
 - **GPU rendering:** `SampleMapRenderer` samples the original image using an uploaded full-resolution inverse map; no stroke batches or point cap. Quality controls RGSS multisampling.
 - **CPU preview:** Background incremental replay uses the same deformation evaluator; cached map and mask share a history boundary. Bilinear preview sampling differs intentionally from GPU RGSS.
-- **Resource limits:** Liquified rejects documents above 8,388,608 pixels or device/dimension limits; no silent downsampling. Both Liquified and Grid Warp retain at most 256 undo steps.
-- **Grid Warp:** Independent dimensions from 2 to 50 cells (up to 2,601 points). Dimension changes reset displacements/history.
-- **Keyboard editing:** Grid Warp/Document Rectify use Ctrl+Page Up/Down for point selection, arrows for nudging, F6 for the X editor, and normal Tab focus traversal.
+- **Resource limits:** Liquified rejects documents above 8,388,608 pixels or device/dimension limits; no silent downsampling. Both Liquified and Grid Warpified retain at most 256 undo steps.
+- **Grid Warpified:** Independent dimensions from 2 to 50 cells (up to 2,601 points). Dimension changes reset displacements, freeze/link constraints, and history. Linked unfrozen points move together; multi-selection alone does not imply group movement.
+- **Settings persistence:** Liquified stores shared brush/view preferences in `%LOCALAPPDATA%\pdn-liquified`, not per-file preferences. Grid Warpified constraints persist in tokens; its overlay settings and editing mode are dialog-only. Doc Recitified has no local undo/redo history.
+- **Keyboard editing:** Grid Warpified/Doc Recitified use Ctrl+Page Up/Down for point selection, arrows for nudging, F6 for the X editor, and normal Tab focus traversal.
 - **Smoothstep falloff:** `s*s*(3-2*s)` with density modulation. No blend cap — cumulative displacement.
 - **DPI scaling:** `AutoScaleMode.None`; manual `_dpi = DeviceDpi / 96f` with `S(int v)` helper.
 - **Obsolescence warning:** `#pragma warning disable CS0612, CS0618` for `EffectConfigForm2`.
@@ -65,7 +69,7 @@ automated checks do not validate live GPU rendering, pen hardware, or mixed-DPI 
 internal readonly partial struct MyShader : ID2D1PixelShader { ... }
 ```
 
-Liquified and Grid Warp upload displacement textures sampled with linear filtering.
+Liquified and Grid Warpified upload displacement textures sampled with linear filtering.
 Dispose retained device-effect arrays before graph replacement/invalidation, including
 partially initialized arrays after creation failures.
 

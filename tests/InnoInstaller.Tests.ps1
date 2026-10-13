@@ -14,19 +14,19 @@ if (Test-Path -LiteralPath $uninstallKey) {
     throw 'Run installer smoke checks on an account without an existing Distortion Plugins installation.'
 }
 $root = Join-Path $TemporaryDirectory ('pdn-inno-tests-' + [Guid]::NewGuid().ToString('N'))
-$destination = Join-Path $root 'isolated Effects'
-New-Item -ItemType Directory -Path $destination -Force | Out-Null
+$destination = Join-Path $root 'missing Documents\paint.net App Files\isolated Effects'
+New-Item -ItemType Directory -Path $root -Force | Out-Null
 $plugins = @('LiquifiedPlugin.dll', 'GridWarpPlugin.dll', 'DocumentRectifyPlugin.dll')
 $previousTemp = $env:TEMP
 $previousTmp = $env:TMP
 $env:TEMP = $root
 $env:TMP = $root
 function Invoke-SetupProcess {
-    param([string] $Path, [string[]] $Arguments)
+    param([string] $Path, [string[]] $Arguments, [int] $ExpectedExitCode = 0)
     $process = Start-Process -FilePath $Path -ArgumentList $Arguments -Wait -PassThru
     try {
-        if ($process.ExitCode -ne 0) {
-            throw "Installer process failed (exit $($process.ExitCode))."
+        if ($process.ExitCode -ne $ExpectedExitCode) {
+            throw "Installer process failed (exit $($process.ExitCode), expected $($ExpectedExitCode))."
         }
     }
     catch {
@@ -41,6 +41,19 @@ function Invoke-SetupProcess {
     }
 }
 try {
+    $blockedParent = Join-Path $root 'blocked Documents'
+    [IO.File]::WriteAllText($blockedParent, 'not a directory')
+    $blockedDestination = Join-Path $blockedParent 'Effects'
+    $blockedLog = Join-Path $root 'blocked-setup.log'
+    Invoke-SetupProcess -Path $InstallerPath -ExpectedExitCode 7 -Arguments @(
+        '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
+        ('/DIR="{0}"' -f $blockedDestination), ('/LOG="{0}"' -f $blockedLog))
+    $failureLog = Get-Content -LiteralPath $blockedLog -Raw
+    if ($failureLog -notmatch 'Cannot create the plugin support folder' -or
+        $failureLog -match 'Starting the installation process' -or
+        (Test-Path -LiteralPath $uninstallKey)) {
+        throw 'Unavailable destination did not fail in preflight with actionable guidance.'
+    }
     $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
         ('/DIR="{0}"' -f $destination), ('/LOG="{0}"' -f (Join-Path $root 'setup.log')))
     Invoke-SetupProcess -Path $InstallerPath -Arguments $arguments
@@ -75,7 +88,10 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $destination 'unrelated-plugin.dll'))) {
         throw 'Uninstall removed an unrelated plugin.'
     }
-    Write-Output 'PASS: Inno install, byte preservation, upgrade, uninstall, and unrelated-plugin preservation.'
+    if (Test-Path -LiteralPath (Join-Path $destination 'pdn-liquified')) {
+        throw 'Uninstall retained the plugin support directory.'
+    }
+    Write-Output 'PASS: unavailable destination, missing parents, byte preservation, upgrade, uninstall, and unrelated-plugin preservation.'
 }
 finally {
     $uninstaller = Join-Path $destination 'pdn-liquified\unins000.exe'

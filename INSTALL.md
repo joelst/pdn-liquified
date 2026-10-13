@@ -1,20 +1,41 @@
 # Installation Guide
 
-This guide explains how to install the Paint.NET Distortion Plugins (Liquified, Grid Warp, Document Rectify).
+This guide explains how to install the Paint.NET Distortion Plugins (Liquified, Grid Warpified, Doc Recitified).
+
+## Choose the right package
+
+The features and tool names in [README.md](./README.md) describe the current source.
+Older downloads may have older names and fewer features.
+
+The currently published `1.0-beta1` prerelease contains only
+`pdn-liquified-1.0-beta1.zip`; it does not include the new setup wizard or all
+current-source features. Open [Releases](https://github.com/joelst/pdn-liquified/releases/)
+and inspect the assets for the version you intend to install. Do not assume a
+setup EXE exists in an older release.
+
+For a release that includes `pdn-liquified-setup.exe`, use the wizard below.
+Otherwise use its complete ZIP package, or build from source. GitHub Actions
+Build artifacts are unsigned development packages, not signed public releases.
 
 ## Requirements
 
 - **Paint.NET 5.1.12 or later** (download from [getpaint.net](https://www.getpaint.net/)).
 - **Windows 10 v21H2 or later, Windows 11, or Windows Server 2022**, with a 64-bit x64 or ARM64 CPU.
-- A Direct3D 11-capable GPU is recommended. These plugins use Paint.NET's GPU effect infrastructure.
+- These plugins use Paint.NET's GPU effect infrastructure. A Direct3D 11-capable
+  GPU is recommended; actual rendering compatibility must be checked in Paint.NET.
+- End users do not need the .NET SDK, PowerShell 7, or Inno Setup to run the setup
+  EXE or use the plugins. The ZIP's PowerShell installer requires Windows
+  PowerShell 5.1 or later. Source builds require the .NET 9 SDK.
 
-## Option 1: Automated Installation (Recommended)
+Paint.NET 5.1.12 is the documented baseline. Compatibility with every later
+stable/beta build is not guaranteed; check release notes and plugin loading errors
+for the host version you use.
 
-### Using the Setup Wizard
+## Option 1: Setup wizard (when included in the release)
 
 1. Close Paint.NET
-2. Download `pdn-liquified-setup.exe` from [Releases](https://github.com/joelst/pdn-liquified/releases/)
-3. Run the installer and accept the license
+2. Download `pdn-liquified-setup.exe` from the intended release's assets
+3. Check the download's signature, then run the installer and accept the license
 4. Keep the default Documents Effects folder, or choose the Effects folder of a portable installation
 5. Finish installation, then restart Paint.NET
 
@@ -27,10 +48,31 @@ destination; use the PowerShell system-install option below when elevation is ne
 Public release installers and their uninstallers are timestamped and Authenticode-signed.
 CI's `pdn-liquified-installer-unsigned` artifact is for development testing only.
 
-### ZIP / Batch Installation
+To inspect a setup EXE or DLL without running it:
 
-The portable ZIP remains available: extract the complete package and double-click
-`install-plugins.bat`. This copies DLLs but does not register an uninstaller.
+```powershell
+Get-AuthenticodeSignature -LiteralPath '.\pdn-liquified-setup.exe' |
+    Select-Object Status, SignerCertificate, TimeStamperCertificate
+```
+
+Signed releases should report `Valid` and include a timestamp certificate. Inspect
+the publisher before proceeding. Signing is not a guarantee of compatibility or
+SmartScreen reputation, and older ZIP releases must not be assumed to be signed.
+
+The default directory is the actual Windows Documents folder's
+`paint.net App Files\Effects`, including folder redirection. DLLs are installed
+directly there; documentation and uninstall files go in its `pdn-liquified`
+subfolder. Setup checks that it can create, write, and remove a temporary file in
+that support folder, but this does not guarantee every later file operation will
+succeed. Review any error rather than assuming a partial installation succeeded.
+
+## Option 2: ZIP / PowerShell installation
+
+Extract the complete ZIP to a writable folder. If the package includes
+`install-plugins.bat` and `install-plugins.ps1`, double-click the batch file to
+install for the current user. This copies the three DLLs but does not register an
+uninstaller or install the documentation. Do not run either script from inside
+the ZIP. If an older package does not include the scripts, use manual installation.
 
 ### Using PowerShell Directly
 
@@ -44,21 +86,29 @@ Set-Location 'C:\path\to\extracted\files'
 The script locates all three DLLs before copying anything, uses the actual Windows
 Documents folder (including OneDrive/folder redirection), and verifies every copied
 DLL using SHA256. It accepts both a flat release package and repository Release outputs.
-It does not install duplicate copies to both locations.
+It checks that destination bytes match the source; this is not publisher or
+Authenticode verification and does not validate a release's `SHA256SUMS.txt`.
+It writes to only the selected location, but does not search for or remove older
+copies elsewhere.
 
 ```powershell
 .\install-plugins.ps1 -WhatIf
 .\install-plugins.ps1 -InstallationScope System
 .\install-plugins.ps1 -InstallationScope System -PdnRoot 'D:\Apps\paint.net'
+.\install-plugins.ps1 -DestinationDirectory 'D:\Apps\paint.net\Effects'
 ```
 
 System installation is opt-in and requests elevation when necessary. A cancelled
 elevation, missing DLL, or failed copy returns a nonzero exit code; existing files
 alone do not count as a successful installation. Close Paint.NET before updating.
+Use `-DestinationDirectory` for a writable portable Effects folder without
+requesting system installation or elevation.
 
-## Option 2: Manual Installation
+## Option 3: Manual installation
 
-If the automated installer doesn't work for any reason:
+Use this when your package contains only DLLs, or you prefer not to run the
+installer. It is not a workaround for a Windows Security block: review and resolve
+that block first.
 
 ### Step 1: Close Paint.NET
 
@@ -117,6 +167,9 @@ Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'paint.net App Files\Eff
 ```
 
 **Note:** Create the `Effects` folder if it doesn't exist.
+For downloaded DLLs, inspect their signatures and the download source. If Windows
+marks a trusted download as blocked, use its Properties dialog's **Unblock**
+option. The PowerShell installer unblocks copied DLLs automatically.
 
 ### Step 4: Start Paint.NET
 
@@ -131,12 +184,39 @@ After installation, verify that the plugins loaded:
 3. Hover over **Tools**
 4. You should see:
    - **Liquified**
-   - **Grid Warp**
-   - **Document Rectify**
+   - **Grid Warpified**
+   - **Doc Recitified**
 
-If you see all three effects, installation was successful!
+Seeing all three confirms menu discovery, not correct GPU rendering. Open an image,
+run each effect, make a visible edit, click OK, and inspect the committed result.
+Check Paint.NET's plugin loading errors in Settings if a plugin is missing.
+Older packages may use the previous tool names.
+
+## Updating an existing installation
+
+Close Paint.NET first. For a wizard installation, run the newer wizard and keep
+the existing destination; setup reuses the previously selected directory. For
+ZIP/manual installations, replace the same three DLLs in the same Effects folder.
+Do not install a second copy in another Effects folder. The installers do not
+automatically migrate or remove duplicate manual/system installations.
+
+DLL filenames remain unchanged despite the new menu names. An older installed
+version is not updated by changing the README or downloading source alone.
 
 ## Troubleshooting
+
+### Setup cannot create a directory (Error 2)
+
+The selected Effects folder or one of its parents may be unavailable. Setup checks
+that it can create its support folder before installing any plugins and reports
+the affected path; it does not silently select a different Documents folder.
+
+If the path is under OneDrive, start OneDrive, confirm Documents opens in File
+Explorer, and make the destination available on this device before retrying.
+Also check that the path is writable and that none of its parent components is
+a file. For portable Paint.NET, select its actual writable Effects directory.
+For a protected classic installation, use the elevated PowerShell system-install
+option instead.
 
 ### "Paint.NET installation not found"
 
@@ -158,12 +238,26 @@ use `-PluginDirectory 'C:\path\to\package'` to select another source.
 1. Paint.NET wasn't restarted after installation
    - **Solution:** Close and reopen Paint.NET completely
 2. Files were copied to the wrong location
-   - **Solution:** Verify files are in one correct location mentioned in "Option 2"; remove obsolete duplicates
+   - **Solution:** Verify files are in one correct location mentioned in "Option 3"; remove obsolete duplicates
 3. Antivirus blocked the DLLs
    - **Solution:** Inspect the security warning and confirm the download is trusted; do not disable antivirus protection
 
 Check Paint.NET's plugin loading errors in its Settings dialog for assembly or runtime
 compatibility failures. A successful file copy does not prove that the host loaded a plugin.
+
+### Setup reports "The system cannot find the file specified" when replacing the uninstaller
+
+Windows Defender Controlled Folder Access can produce this misleading error when
+the destination is Documents, including OneDrive Documents. A writable folder and
+a valid installer signature do not rule out this protection.
+
+Open **Windows Security > Virus & threat protection > Protection history** and
+check for a block involving `pdn-liquified-setup.tmp` at the time of installation.
+If you trust the signed release, review the blocked app and explicitly allow it
+through Controlled Folder Access using Windows Security, then retry setup.
+The temporary setup path can change between runs. Do not disable antivirus or
+Controlled Folder Access. The installer checks write access before replacing
+files and never changes Windows Security settings itself.
 
 ### Administrator privileges required
 
@@ -179,8 +273,9 @@ default remains the user folder.
 
 **Solution:**
 
-1. This is unlikely but can happen if there's a compatibility issue
-2. Uninstall the plugins by deleting the three DLL files from the Effects folders
+1. Close Paint.NET and preserve the error message or crash report
+2. Uninstall through Windows Installed Apps for a wizard installation, or remove
+   only these three DLLs for a ZIP/manual installation
 3. Restart Paint.NET
 4. Report the issue on [GitHub Issues](https://github.com/joelst/pdn-liquified/issues)
 
@@ -189,7 +284,11 @@ default remains the user folder.
 Liquified supports at most 8,388,608 pixels and 16,384 pixels per dimension, subject
 to the GPU's bitmap limit. A 3840 x 2160 image fits; an 8K image does not. Reduce
 image dimensions before using this effect. It does not silently downsample or drop
-strokes. Grid Warp and Document Rectify do not use this Liquified-specific limit.
+strokes. Grid Warpified and Doc Recitified do not use this Liquified-specific limit.
+The limit is total pixel area, not exactly 4K dimensions; some images wider than
+4K still fit. Raising the limit is not a supported user setting. Large images can
+still exhaust available memory below the cap because Paint.NET and other effects
+also consume resources.
 
 ## Uninstallation
 
@@ -211,6 +310,11 @@ Effects directory or other plugins.
    - `DocumentRectifyPlugin.dll`
 
 3. Restart Paint.NET
+
+Uninstallation does not remove Liquified's shared preferences in
+`%LOCALAPPDATA%\pdn-liquified`. To reset brush/view preferences, close Paint.NET and
+remove only `liquified-defaults.json` and `liquified-last-used.json` there. Neither
+file contains strokes, masks, or image data. Do not delete the entire Effects folder.
 
 ## Support
 
@@ -237,3 +341,5 @@ Use the .NET 9 SDK and stable Paint.NET references, not development assemblies t
 require a newer .NET runtime. Release builds merge dependencies but do not deploy.
 Run the installer afterward, or opt in with `/p:DeployPlugins=true`; deployment uses
 the actual user Documents folder unless `/p:PdnEffectsDirOverride='<directory>'` is supplied.
+Local build outputs are unsigned unless explicitly signed. Building does not
+create a setup EXE; see [RELEASES.md](./RELEASES.md) for packaging and signing.

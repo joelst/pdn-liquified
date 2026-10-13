@@ -15,9 +15,10 @@
     <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
     <Deterministic>False</Deterministic>
     <AssemblyVersion>5.1.*</AssemblyVersion>
-    <Description>Document rectify perspective-correction effect for Paint.NET 5.x with GPU-accelerated rendering.</Description>
+    <Description>Doc Recitified perspective-correction effect for Paint.NET 5.x with GPU-accelerated rendering.</Description>
     <Authors>DocumentRectifyPlugin Contributors</Authors>
-    <Product>DocumentRectifyPlugin</Product>
+    <Product>Doc Recitified</Product>
+    <AssemblyTitle>Doc Recitified</AssemblyTitle>
     <Copyright>Copyright © 2025 DocumentRectifyPlugin Contributors</Copyright>
   </PropertyGroup>
   <PropertyGroup>

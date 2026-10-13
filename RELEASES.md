@@ -2,6 +2,15 @@
 
 This document explains how the pdn-liquified project distributes releases to end users.
 
+## Published releases versus current source
+
+The published `1.0-beta1` prerelease currently provides
+`pdn-liquified-1.0-beta1.zip` only. It predates the current setup wizard, renamed
+tools, and newer editing features. The package layout and workflow below describe
+the current release pipeline, not assets guaranteed to exist in that older release.
+Inspect [release assets](https://github.com/joelst/pdn-liquified/releases/) before
+giving users a download filename. A local signed installer is not a published release.
+
 ## Release Contents
 
 The recommended download is `pdn-liquified-setup.exe`, a per-user Inno Setup wizard
@@ -11,8 +20,8 @@ contains these files at its root (no versioned subfolder):
 ```
 pdn-liquified-signed.zip
 ├── LiquifiedPlugin.dll          (Liquified effect - brush-based distortion)
-├── GridWarpPlugin.dll           (Grid Warp effect - mesh-based distortion)
-├── DocumentRectifyPlugin.dll    (Document Rectify effect - perspective correction)
+├── GridWarpPlugin.dll           (Grid Warpified effect - mesh-based distortion)
+├── DocumentRectifyPlugin.dll    (Doc Recitified effect - perspective correction)
 ├── install-plugins.bat          (Batch installer - double-click to run)
 ├── install-plugins.ps1          (PowerShell installer - advanced users)
 ├── INSTALL.md                   (Detailed installation instructions)
@@ -30,9 +39,10 @@ The unsigned Build packages omit the signing checksums and `BUILD.txt`.
 
 ### For Users (Quickstart)
 
-1. Download `pdn-liquified-setup.exe` from [Releases](../../releases)
+1. Open [Releases](https://github.com/joelst/pdn-liquified/releases/) and select the intended version
 2. Close Paint.NET
-3. Run the setup wizard
+3. Download and run its signed setup wizard if included; otherwise extract its
+   complete ZIP and follow [ZIP/manual installation](./INSTALL.md#option-2-zip--powershell-installation)
 4. The default user install does not require administrator access
 5. Done! Restart Paint.NET to see the new effects
 
@@ -56,7 +66,7 @@ It can also be dispatched from `main` with a successful Build run ID. Failed bui
 pull-request/fork artifacts, other workflows, and unsigned or untimestamped results
 are rejected. The existing Build artifacts remain unsigned development artifacts.
 
-Attach the ZIP and its external `SHA256SUMS.txt` from the **Signed release** artifact
+Attach the EXE, ZIP, and external `SHA256SUMS.txt` from the **Signed release** artifact
 to the GitHub release. Never rebuild, trim, merge, or modify DLLs after signing.
 The workflow prepares a signed artifact; it does not publish a release automatically.
 The wizard Setup and generated Uninstall are Authenticode-signed using Inno's signing
@@ -69,8 +79,9 @@ Get-AuthenticodeSignature -LiteralPath .\LiquifiedPlugin.dll |
     Select-Object Status, SignerCertificate, TimeStamperCertificate
 ```
 
-Local signing of an extracted Release package is also supported after Azure CLI login
-to the signing tenant and installing `ArtifactSigning` version `0.1.8`:
+Local signing of an extracted Release package is also supported with PowerShell
+7.2 or later, Azure CLI login to the signing tenant, the signing account's
+subscription selected, and `ArtifactSigning` version `0.1.8` installed:
 
 ```powershell
 .\scripts\Sign-Release.ps1 -PackageDirectory 'C:\path\to\release-package'
@@ -83,6 +94,14 @@ GitHub's release environment holds these profile variables and the identity iden
 `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`. These are identifiers,
 not client-secret credentials. Federation uses
 `repo:joelst/pdn-liquified:environment:release`.
+
+Select the subscription containing the signing account before local signing
+(`az account set --subscription '<signing-subscription-id>'`), checking
+`$LASTEXITCODE` after Azure CLI commands. An authenticated user with a different
+active subscription can still receive HTTP 403 from signing. Check profile status,
+identity, subscription/tenant context, and existing authorization before retrying;
+do not broaden permissions or package unsigned output as a fallback. Restore any
+previous CLI subscription selection when finished.
 
 Signing identifies the publisher and detects binary tampering. It does not guarantee
 SmartScreen reputation, Paint.NET compatibility, or correct GPU behavior.
@@ -128,13 +147,13 @@ presented as signed public releases.
 ````markdown
 # Paint.NET Distortion Plugins v1.0.0
 
-GPU-accelerated distortion effects for Paint.NET 5.x.
+GPU-accelerated distortion effects for Paint.NET 5.x: **Liquified**, **Grid Warpified**, and **Doc Recitified**. Find all three under **Effects > Tools**.
 
 ## New in This Release
 
 - ✨ Liquified: 10 brush modes (Forward Warp, Pucker, Bloat, Twist, etc.)
-- ✨ Grid Warp: Draggable control point mesh distortion
-- ✨ Document Rectify: Automatic perspective correction
+- ✨ Grid Warpified: Draggable control point mesh distortion
+- ✨ Doc Recitified: Interactive perspective correction with estimated document corners
 
 ## Installation
 
@@ -162,19 +181,27 @@ See [INSTALL.md](INSTALL.md) for detailed instructions and troubleshooting.
 - Brush Rate and optional Windows pen pressure; mesh, backdrop, mask and reconstruction controls
 - Explicit 8,388,608-pixel resource limit (4K supported), without silent downsampling
 - Freeze/Unfreeze to protect areas from distortion
-- Undo/Redo/Reset with keyboard shortcuts
+- Persistent brush/view preferences and Save Defaults (not per-file settings)
+- Always-visible mode icons, compact top-bar settings, and collapsible advanced settings
+- Ctrl+Z/Ctrl+Y undo/redo; Restore All removes deformation while retaining the mask
 
-### Grid Warp
+### Grid Warpified
 - Independent grid dimensions from 2 to 50 cells (up to 2,601 control points)
 - Bilinear interpolation for smooth distortion
 - Real-time preview and grid overlay
 - Up to 256 undo steps, with keyboard and numeric point editing
+- Freeze/Unfreeze, Link/Unlink, and Move modes with Alt+1--5 shortcuts
+- Contrasting linked-point connections; Esc returns constraint modes to Move
+- Width, height, quality, grid-color dropdowns and a grid-visibility icon toggle in the top bar
 
-### Document Rectify
-- Automatic document corner detection
+### Doc Recitified
+- Heuristic document corner estimation; inspect and adjust before applying
 - Interactive 4-point perspective correction
 - Multiple aspect ratio presets (A4, Letter, Square, Custom)
 - GPU-accelerated rendering
+- Aspect-preserving output fits inside the existing canvas with transparent margins;
+  it does not resize the document
+- Reset Corners is available; the dialog does not have its own undo/redo history
 
 ## Building from Source
 
@@ -237,12 +264,13 @@ MIT - See [LICENSE](LICENSE) file
    - Test on both Windows 10 and Windows 11
 
 6. **Provide multiple installation methods**
-   - Batch file (easiest for users)
-   - PowerShell script (more flexible)
-   - Manual instructions (fallback)
+   - Signed setup wizard (recommended when published)
+   - ZIP with batch/PowerShell installers (manual/portable or system deployment)
+   - Manual DLL installation (not a workaround for a Windows Security block)
 
 ## Version History
 
-| Version | Release Date | Notes                                     |
-| ------- | ------------ | ----------------------------------------- |
-| 1.0.0   | TBD          | Initial release with 3 distortion effects |
+| Version | Status | Notes |
+| ------- | ------ | ----- |
+| `1.0-beta1` | Published prerelease | Older ZIP-only release; not all current-source features |
+| Next release | Unpublished | Current-source features and signed setup/ZIP pipeline described above |
