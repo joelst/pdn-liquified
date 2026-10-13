@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       build_run_id:
-        description: Successful main-branch Build run ID to sign
-        required: true
+        description: 'Numeric Build run ID, not package version (blank = latest successful main Build)'
+        required: false
         type: string
 
 permissions:
@@ -37,7 +37,16 @@ jobs:
           REQUESTED_RUN: ${{ inputs.build_run_id || github.event.workflow_run.id }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:REQUESTED_RUN -notmatch '^[0-9]+$') { throw 'A numeric build run ID is required.' }
+          if ([string]::IsNullOrWhiteSpace($env:REQUESTED_RUN)) {
+            $pages = gh api "repos/$($env:REPOSITORY)/actions/workflows/build.yml/runs?branch=main&status=success&per_page=100" --paginate --slurp | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Build run discovery failed.' }
+            $latest = $pages.workflow_runs | Where-Object { $_.event -in @('push', 'workflow_dispatch') } | Select-Object -First 1
+            if (-not $latest) { throw 'No successful main-branch Build found. Run Build on main with the intended package_version first.' }
+            $env:REQUESTED_RUN = [string]$latest.id
+          }
+          if ($env:REQUESTED_RUN -notmatch '^[0-9]+$') {
+            throw 'build_run_id must be the numeric ID from the Build URL (/actions/runs/<ID>), not a package version. Set package_version in Build; leave build_run_id blank to sign the latest successful main Build.'
+          }
           $run = gh api "repos/$($env:REPOSITORY)/actions/runs/$($env:REQUESTED_RUN)" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Build run lookup failed.' }
           $workflow = gh api "repos/$($env:REPOSITORY)/actions/workflows/$($run.workflow_id)" | ConvertFrom-Json

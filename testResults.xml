@@ -1,0 +1,36 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<test-results xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="nunit_schema_2.5.xsd" name="Pester" total="15" errors="0" failures="0" not-run="0" inconclusive="0" ignored="0" skipped="0" invalid="0" date="2026-10-13" time="18:01:31">
+  <environment cwd="/home/runner/work/pdn-liquified/pdn-liquified" nunit-version="2.5.8.0" platform="Linux" os-version="6.17.0-1022-azure" clr-version="10.0.12" user="runner" machine-name="runnervmmprz5" user-domain="" />
+  <culture-info current-culture="" current-uiculture="" />
+  <test-suite type="TestFixture" name="Pester" executed="True" result="Success" success="True" time="1.6278" asserts="0" description="Pester">
+    <results>
+      <test-suite type="TestFixture" name="/home/runner/work/pdn-liquified/pdn-liquified/tests/ReleaseProvenance.Tests.ps1" executed="True" result="Success" success="True" time="1.6278" asserts="0" description="/home/runner/work/pdn-liquified/pdn-liquified/tests/ReleaseProvenance.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Trusted signing build selection" executed="True" result="Success" success="True" time="1.1433" asserts="0" description="Trusted signing build selection">
+            <results>
+              <test-case description="preserves explicit and workflow_run build IDs without discovery" name="Trusted signing build selection.preserves explicit and workflow_run build IDs without discovery" time="0.4632" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="discovers a successful main Build when the input is blank" name="Trusted signing build selection.discovers a successful main Build when the input is blank" time="0.0468" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="skips pull-request runs and searches subsequent pages" name="Trusted signing build selection.skips pull-request runs and searches subsequent pages" time="0.0316" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="selects the newest eligible run rather than an older one" name="Trusted signing build selection.selects the newest eligible run rather than an older one" time="0.0454" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects package versions with actionable guidance before API access" name="Trusted signing build selection.rejects package versions with actionable guidance before API access" time="0.0903" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="fails closed when no eligible build exists" name="Trusted signing build selection.fails closed when no eligible build exists" time="0.0252" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="fails closed on a discovery API error" name="Trusted signing build selection.fails closed on a discovery API error" time="0.0218" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="fails closed on a run lookup API error" name="Trusted signing build selection.fails closed on a run lookup API error" time="0.043" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects other workflows after discovery" name="Trusted signing build selection.rejects other workflows after discovery" time="0.047" asserts="0" success="True" result="Success" executed="True" />
+              <test-suite type="ParameterizedTest" name="Trusted signing build selection.rejects untrusted &lt;Field&gt; for both explicit and discovered builds" executed="True" result="Success" success="True" time="0.2761" asserts="0" description="rejects untrusted &lt;Field&gt; for both explicit and discovered builds">
+                <results>
+                  <test-case description="rejects untrusted conclusion for both explicit and discovered builds" name="Trusted signing build selection.rejects untrusted conclusion for both explicit and discovered builds" time="0.0508" asserts="0" success="True" result="Success" executed="True" />
+                  <test-case description="rejects untrusted status for both explicit and discovered builds" name="Trusted signing build selection.rejects untrusted status for both explicit and discovered builds" time="0.0476" asserts="0" success="True" result="Success" executed="True" />
+                  <test-case description="rejects untrusted head_branch for both explicit and discovered builds" name="Trusted signing build selection.rejects untrusted head_branch for both explicit and discovered builds" time="0.0431" asserts="0" success="True" result="Success" executed="True" />
+                  <test-case description="rejects untrusted head_repository for both explicit and discovered builds" name="Trusted signing build selection.rejects untrusted head_repository for both explicit and discovered builds" time="0.0444" asserts="0" success="True" result="Success" executed="True" />
+                  <test-case description="rejects untrusted event for both explicit and discovered builds" name="Trusted signing build selection.rejects untrusted event for both explicit and discovered builds" time="0.0487" asserts="0" success="True" result="Success" executed="True" />
+                  <test-case description="rejects untrusted head_sha for both explicit and discovered builds" name="Trusted signing build selection.rejects untrusted head_sha for both explicit and discovered builds" time="0.0415" asserts="0" success="True" result="Success" executed="True" />
+                </results>
+              </test-suite>
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+    </results>
+  </test-suite>
+</test-results>

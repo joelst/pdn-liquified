@@ -70,7 +70,12 @@ through the `release` environment, which permits only the `main` branch.
 After a successful main-branch **Build**, the workflow signs the three final merged DLLs,
 verifies trusted signatures and RFC3161 timestamps, and creates
 `pdn-liquified-signed.zip` with signed-byte SHA256 checksums and build provenance.
-It can also be dispatched from `main` with a successful Build run ID. Failed builds,
+It can also be dispatched from `main`: leave `build_run_id` blank to select the
+latest successful main-branch Build, or supply the numeric ID from the intended
+Build's URL (`/actions/runs/<ID>`). This is **not** a package version: set versions
+such as `1.0.261013` in the **Build** workflow's `package_version` input first.
+Signing preserves the selected build's `PACKAGE-VERSION.txt`; it does not change
+its version. Failed builds,
 pull-request/fork artifacts, other workflows, and unsigned or untimestamped results
 are rejected. The existing Build artifacts remain unsigned development artifacts.
 
