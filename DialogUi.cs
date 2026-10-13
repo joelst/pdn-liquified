@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace DistortionPlugins;
 
-internal enum UiGlyph { Info, Collapse, Expand, Undo, Redo, Reset, Detect, Grid, Move, Freeze, Unfreeze, Link, Unlink, Mask, Backdrop, PenPressure }
+internal enum UiGlyph { Info, Collapse, Expand, Undo, Redo, Reset, Detect, Grid, Move, Freeze, Unfreeze, Link, Unlink, Mask, Backdrop, PenPressure, Save }
 
 internal sealed class GlyphButton : Button
 {
@@ -57,6 +57,12 @@ internal sealed class GlyphButton : Button
         else if (Glyph is UiGlyph.Freeze or UiGlyph.Unfreeze)
         {
             DialogUi.DrawFreezeGlyph(graphics, pen, Glyph == UiGlyph.Unfreeze);
+        }
+        else if (Glyph == UiGlyph.Save)
+        {
+            graphics.DrawPolygon(pen, new[] { new PointF(4, 3), new PointF(17, 3), new PointF(21, 7), new PointF(21, 21), new PointF(4, 21) });
+            graphics.DrawRectangle(pen, 8, 3, 8, 6);
+            graphics.DrawRectangle(pen, 8, 14, 9, 7);
         }
         else if (Glyph == UiGlyph.Mask)
         {

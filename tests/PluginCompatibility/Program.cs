@@ -122,6 +122,8 @@ internal static class Program
                     MethodInfo sync = formType.GetMethod("SyncUIFromToken", BindingFlags.Instance | BindingFlags.NonPublic)!;
                     sync.Invoke(form, new[] { token });
                     Control toolbar = Descendants(form).Single(control => control.Name == "commonSettingsBar");
+                    if (!Descendants(toolbar).Contains((Control)formType.GetField("reconstructSlider", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!))
+                        throw new InvalidOperationException("Global reconstruction is not on the top toolbar.");
                     ToolTip toggleTips = (ToolTip)formType.GetField("uiToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
                     foreach (var (field, property, onAction, offAction) in new[]
                     {
@@ -150,6 +152,25 @@ internal static class Program
                             if ((bool)tokenType.GetProperty(property)!.GetValue(toggledToken)! == enabled ||
                                 (bool)selected.GetValue(toggle)! == enabled)
                                 throw new InvalidOperationException("Liquified toolbar toggle did not update its token: " + field);
+                            if (property == "ShowMesh")
+                            {
+                                Control meshSize = (Control)formType.GetField("meshSizeSlider", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                                Control group = meshSize.Parent!;
+                                Control parent = group.Parent!;
+                                int index = parent.Controls.GetChildIndex(group);
+                                using var visibleParent = new Panel();
+                                try
+                                {
+                                    visibleParent.Controls.Add(group);
+                                    if (group.Visible == enabled)
+                                        throw new InvalidOperationException("Mesh size visibility does not follow the mesh toggle.");
+                                }
+                                finally
+                                {
+                                    parent.Controls.Add(group);
+                                    parent.Controls.SetChildIndex(group, index);
+                                }
+                            }
                         }
                     }
                     tokenType.GetProperty("ShowMask")!.SetValue(token, false);
@@ -290,7 +311,7 @@ internal static class Program
                     }
                     finally { File.Delete(settingsPath); }
                     var rail = (FlowLayoutPanel)formType.GetField("modeButtonsPanel", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
-                    if (rail.Name != "modeRail" || rail.Parent != form || rail.Controls.Count != 10 || !rail.AutoScroll)
+                    if (rail.Name != "modeRail" || rail.Parent != form || rail.Controls.OfType<Button>().Count() != 10 || !rail.AutoScroll)
                         throw new InvalidOperationException("Liquified mode icons are not in the persistent scrollable rail.");
                     MethodInfo shortcut = formType.GetMethod("ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic)!;
                     for (int i = 0; i < 10; i++)
@@ -826,8 +847,14 @@ internal static class Program
                                 throw new InvalidOperationException("Liquified retains the removed 100% reconstruction button.");
                             Button restore = Descendants(form).OfType<Button>().Single(button => button.AccessibleName == "Remove Deformation");
                             Control settings = (Control)formType.GetField("leftPanel", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
-                            if (!Descendants(settings).Contains(restore))
-                                throw new InvalidOperationException("Remove Deformation is not in the left settings bar.");
+                            Control rail = (Control)formType.GetField("modeButtonsPanel", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                            Control actionParent = collapsed ? rail : settings;
+                            foreach (string action in new[] { "Mask None", "Mask All", "Invert Mask", "Remove Deformation", "Save Defaults" })
+                            {
+                                Button button = Descendants(form).OfType<Button>().Single(button => button.AccessibleName == action);
+                                if (!Descendants(actionParent).Contains(button) || button.Text.Length != 0)
+                                    throw new InvalidOperationException("Liquified editing actions did not relocate to the visible left bar.");
+                            }
                             if (!collapsed)
                             {
                                 TrackBar amount = (TrackBar)formType.GetField("reconstructSlider", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;

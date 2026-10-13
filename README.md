@@ -35,13 +35,15 @@ Paint.NET supplies the installed DLL location.
 - **View options** -- deformation mesh with adjustable spacing, document-composition backdrop, selection-aware preview, and processing status
 - **Undo / Redo** with `Ctrl+Z` / `Ctrl+Y`; Remove Deformation removes deformation
   while preserving the mask
-- **Common-settings bar** -- brush size, pressure, density, rate, quality, and mesh
+- **Common-settings bar** -- brush size, pressure, density, rate, reconstruction, quality, and mesh
   size stay above the canvas, alongside Show Mesh, Show Mask, Show Backdrop, and
   Use Pen Pressure icon toggles.
   Filled icons indicate enabled options; hover for current-action guidance.
-  Remove Deformation is in the left settings bar. A collapse/expand
+  Mesh Size is hidden when the mesh is hidden. Mask actions, Remove Deformation,
+  and the Save Defaults disk icon move from left settings to the scrollable mode
+  rail when settings are collapsed. A collapse/expand
   chevron toggles the advanced left panel without hiding these controls, Undo,
-  Redo, OK, or Cancel. The global reconstruction amount remains in advanced settings.
+  Redo, OK, or Cancel. The global reconstruction amount remains on the top bar.
 - **Persistent mode rail** -- the ten larger brush icons remain on the left when
   settings are hidden. `Alt+1` through `Alt+9` select Forward Warp through Freeze;
   `Alt+0` selects Unfreeze. Tooltips and accessible descriptions list each hotkey.

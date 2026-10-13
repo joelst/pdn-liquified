@@ -31,6 +31,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   private DistortionPlugins.GlyphButton showMeshButton = null!, showMaskButton = null!, showBackdropButton = null!, penPressureButton = null!;
   private Panel canvas = null!;
   private FlowLayoutPanel leftPanel = null!;
+  private FlowLayoutPanel editingActions = null!;
   private Button sidebarButton = null!;
   private bool sidebarCollapsed;
   private LiquifiedMode selectedMode = LiquifiedMode.ForwardWarp;
@@ -451,24 +452,29 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     {
       var group = new FlowLayoutPanel
       {
-        Width = S(140), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        Width = S(125), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
         FlowDirection = FlowDirection.TopDown, WrapContents = false,
         Margin = new Padding(0, 0, S(4), 0)
       };
       topBar.Controls.Add(group);
       return group;
     }
-    (brushSizeSlider, brushSizeValue) = AddSlider(BrushGroup(), "Size:", S(135), 5, 1200, 80, v => $"{v} px");
-    (strengthSlider, strengthValue) = AddSlider(BrushGroup(), "Pressure:", S(135), 5, 100, 25, v => $"{v}%");
+    (brushSizeSlider, brushSizeValue) = AddSlider(BrushGroup(), "Size:", S(120), 5, 1200, 80, v => $"{v} px");
+    (strengthSlider, strengthValue) = AddSlider(BrushGroup(), "Pressure:", S(120), 5, 100, 25, v => $"{v}%");
     strengthSlider.TickFrequency = 5;
     strengthSlider.SmallChange = 5;
     strengthSlider.LargeChange = 10;
-    (densitySlider, densityValue) = AddSlider(BrushGroup(), "Density:", S(135), 0, 100, 25, v => $"{v}%");
-    (rateSlider, rateValue) = AddSlider(BrushGroup(), "Rate:", S(135), 1, 120, 20, v => $"{v}/s");
-    (reconstructSlider, reconstructValue) = AddSlider(leftPanel, "Reconstruct Amount:", ctrlW, 0, 100, 0, v => $"{v}%");
-    leftPanel.Controls.Add(MakeHintLabel("Blend the complete deformation field back toward the original image.", ctrlW));
-    (qualitySlider, qualityValue) = AddSlider(BrushGroup(), "Quality:", S(135), 1, 4, 2, v => $"{v}x");
-    (meshSizeSlider, meshSizeValue) = AddSlider(BrushGroup(), "Mesh Size:", S(135), 8, 256, 32, v => $"{v} px");
+    (densitySlider, densityValue) = AddSlider(BrushGroup(), "Density:", S(120), 0, 100, 25, v => $"{v}%");
+    (rateSlider, rateValue) = AddSlider(BrushGroup(), "Rate:", S(120), 1, 120, 20, v => $"{v}/s");
+    var reconstructionGroup = BrushGroup();
+    reconstructionGroup.Width = S(155);
+    (reconstructSlider, reconstructValue) = AddSlider(reconstructionGroup, "Reconstruct:", S(150), 0, 100, 0, v => $"{v}%");
+    reconstructSlider.AccessibleName = "Reconstruct Amount";
+    DistortionPlugins.DialogUi.AddControlInfo(this, reconstructSlider, uiToolTip,
+      "Blend the whole deformation back toward the original. Default 0% preserves your edits; 100% shows the original. This is separate from local Reconstruct brush strength.");
+    (qualitySlider, qualityValue) = AddSlider(BrushGroup(), "Quality:", S(120), 1, 4, 2, v => $"{v}x");
+    (meshSizeSlider, meshSizeValue) = AddSlider(BrushGroup(), "Mesh:", S(120), 8, 256, 32, v => $"{v} px");
+    meshSizeSlider.AccessibleName = "Mesh Size";
     DistortionPlugins.DialogUi.AddControlInfo(this, qualitySlider, uiToolTip,
       "RGSS multisampling for the final render: higher quality is smoother but slower. This does not change CPU preview sampling.");
 
@@ -493,9 +499,10 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     topBar.Controls.Add(viewActions);
     UpdateToolbarToggles();
 
-    var maskRow = new FlowLayoutPanel
+    editingActions = new FlowLayoutPanel
     {
-      FlowDirection = FlowDirection.LeftToRight,
+      Name = "editingActions",
+      FlowDirection = FlowDirection.TopDown,
       AutoSize = true,
       WrapContents = false,
       BackColor = Color.Transparent,
@@ -507,11 +514,11 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     maskNoneBtn.Click += (_, _) => SetMask(LiquifiedMaskOperation.None);
     maskAllBtn.Click += (_, _) => SetMask(LiquifiedMaskOperation.All);
     maskInvertBtn.Click += (_, _) => SetMask(LiquifiedMaskOperation.Invert);
-    maskRow.Controls.AddRange(new Control[] { maskNoneBtn, maskAllBtn, maskInvertBtn });
-    leftPanel.Controls.Add(maskRow);
+    editingActions.Controls.AddRange(new Control[] { maskNoneBtn, maskAllBtn, maskInvertBtn });
+    leftPanel.Controls.Add(editingActions);
 
     resetBtn = MakeActionButton(ActionGlyph.Restore, "Remove Deformation", "Remove deformation while preserving the freeze mask. This edit can be undone.");
-    leftPanel.Controls.Add(resetBtn);
+    editingActions.Controls.Add(resetBtn);
 
     statusLabel = MakeAutoLabel("Ready");
     statusLabel.MaximumSize = new Size(ctrlW, 0);
@@ -529,10 +536,11 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       Margin = new Padding(0, S(8), 0, S(8))
     };
     leftPanel.Controls.Add(helpLabel);
-    var saveDefaults = MakeButton("Save Defaults");
-    saveDefaults.AccessibleDescription = "Save the current brush and display settings for new Liquified sessions, without strokes or masks.";
+    var saveDefaults = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.Save,
+      "Save Defaults", "Save brush and display settings for new Liquified sessions, without strokes, masks, or reconstruction.");
+    saveDefaults.Name = "saveDefaults";
     saveDefaults.Click += (_, _) => SaveDefaults();
-    leftPanel.Controls.Add(saveDefaults);
+    editingActions.Controls.Add(saveDefaults);
 
     undoBtn = MakeActionButton(ActionGlyph.Undo, "Undo", "Undo last edit (Ctrl+Z; up to 256 retained steps).");
     redoBtn = MakeActionButton(ActionGlyph.Redo, "Redo", "Redo last undone edit (Ctrl+Y).");
@@ -588,6 +596,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   private void SetSidebarCollapsed(bool collapsed)
   {
     sidebarCollapsed = collapsed;
+    (collapsed ? modeButtonsPanel : leftPanel).Controls.Add(editingActions);
     leftPanel.Visible = !collapsed;
     ((DistortionPlugins.GlyphButton)sidebarButton).Glyph = collapsed ? DistortionPlugins.UiGlyph.Expand : DistortionPlugins.UiGlyph.Collapse;
     sidebarButton.AccessibleName = collapsed ? "Show advanced settings" : "Hide advanced settings";
@@ -1716,6 +1725,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   private void UpdateToolbarToggles()
   {
+    meshSizeSlider.Parent!.Visible = showMeshButton.IsSelected;
     void Describe(DistortionPlugins.GlyphButton button, string show, string hide, string description)
     {
       button.AccessibleName = button.IsSelected ? hide : show;
