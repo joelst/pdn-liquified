@@ -187,7 +187,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
         linkedGroups = new int[pointCount];
         if (token.LinkedGroups?.Length == pointCount)
             for (int i = 0; i < pointCount; i++)
-                linkedGroups[i] = token.LinkedGroups[i] > 0 && token.LinkedGroups[i] <= pointCount ? token.LinkedGroups[i] : 0;
+                linkedGroups[i] = token.LinkedGroups[i] > 0 ? token.LinkedGroups[i] : 0;
         NormalizeLinkGroups();
         linkAnchor = -1;
 
@@ -309,7 +309,7 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
                    "Alt+1..5: Move / Freeze / Unfreeze / Link / Unlink\n" +
                    "In constraint modes click points (or navigate and press Space); no dragging.\n" +
                    "Link: click an anchor, then other points. Esc: return to Move.\n" +
-                   "Freeze fixes selected points; linked groups move together except frozen members.",
+                   "Freeze fixes the clicked or keyboard-active point; linked groups move together except frozen members.",
             AutoSize = true,
             MaximumSize = new Size(ctrlW, 0),
             ForeColor = LabelColor,

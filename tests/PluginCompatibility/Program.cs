@@ -239,6 +239,11 @@ internal static class Program
                     throw new InvalidOperationException(name + " menu icon is missing or lacks a transparent background.");
                 if (name == "DocumentRectifyPlugin")
                 {
+                    Button detect = (Button)formType.GetField("autoDetectBtn", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    ToolTip detectTips = (ToolTip)formType.GetField("uiToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    if (detectTips.GetToolTip(detect) != detect.AccessibleDescription ||
+                        !detect.AccessibleDescription!.Contains("Inspect and adjust", StringComparison.Ordinal))
+                        throw new InvalidOperationException("Auto Detect tooltip omits the accessible inspection guidance.");
                     PropertyInfo aspectMode = tokenType.GetProperty("AspectMode")!;
                     Type modeType = aspectMode.PropertyType;
                     int expected = Convert.ToInt32(Enum.Parse(modeType, "PreserveDetected"));
@@ -296,6 +301,32 @@ internal static class Program
                 }
                 if (name == "GridWarpPlugin")
                 {
+                    int pointCount = ((int)tokenType.GetProperty("GridWidth")!.GetValue(token)! + 1) *
+                        ((int)tokenType.GetProperty("GridHeight")!.GetValue(token)! + 1);
+                    int[] importedLinks = new int[pointCount];
+                    importedLinks[0] = importedLinks[1] = int.MaxValue;
+                    importedLinks[2] = importedLinks[3] = 999;
+                    importedLinks[4] = -1;
+                    importedLinks[5] = 998;
+                    tokenType.GetProperty("LinkedGroups")!.SetValue(token, importedLinks);
+                    formType.GetMethod("OnUpdateDialogFromToken", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new[] { token });
+                    int[] normalizedLinks = (int[])formType.GetField("linkedGroups", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    if (normalizedLinks[0] != 1 || normalizedLinks[1] != 1 ||
+                        normalizedLinks[2] != 3 || normalizedLinks[3] != 3 ||
+                        normalizedLinks[4] != 0 || normalizedLinks[5] != 0 ||
+                        !importedLinks.Take(4).SequenceEqual(new[] { int.MaxValue, int.MaxValue, 999, 999 }))
+                        throw new InvalidOperationException("Grid token load loses valid positive groups, merges groups, or mutates the input.");
+                    object normalizedToken = Activator.CreateInstance(tokenType)!;
+                    formType.GetMethod("OnUpdateTokenFromDialog", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new[] { normalizedToken });
+                    formType.GetMethod("OnUpdateDialogFromToken", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new[] { normalizedToken });
+                    if (!normalizedLinks.SequenceEqual((int[])formType.GetField("linkedGroups", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!))
+                        throw new InvalidOperationException("Normalized grid links do not round-trip.");
+                    tokenType.GetProperty("LinkedGroups")!.SetValue(token, Array.Empty<int>());
+                    formType.GetMethod("OnUpdateDialogFromToken", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new[] { token });
+                    string constraintHelp = Descendants(form).Single(control => control.Name == "controlInfo" &&
+                        control.AccessibleDescription!.Contains("Freeze fixes", StringComparison.Ordinal)).AccessibleDescription!;
+                    if (!constraintHelp.Contains("clicked or keyboard-active point", StringComparison.Ordinal))
+                        throw new InvalidOperationException("Freeze guidance implies batch application to a selection.");
                     if (Descendants(form).OfType<Button>().Any(button =>
                         button.Text is "Freeze Selected" or "Unfreeze Selected" or "Link Selected" or "Unlink Selected") ||
                         Descendants(form).OfType<Button>().Count(button => button.Name.StartsWith("pointMode", StringComparison.Ordinal)) != 5)

@@ -351,7 +351,6 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
   {
     uiToolTip.SetToolTip(qualitySlider, "RGSS sample quality for final render");
     uiToolTip.SetToolTip(canvas, "Left-click or Ctrl+Page Up/Down selects a corner. Tab/Shift+Tab moves focus out of the canvas; F6 edits coordinates. Arrow keys move the corner; Shift+arrows move 10 image pixels. Right-click drag to pan; wheel to zoom.");
-    uiToolTip.SetToolTip(autoDetectBtn, "Estimate document corners from image content");
     uiToolTip.SetToolTip(aspectCombo, "Aspect ratio of the rectified output");
 
     qualitySlider.ValueChanged += (_, _) =>
