@@ -15,9 +15,10 @@
     <ProduceReferenceAssembly>False</ProduceReferenceAssembly>
     <Deterministic>False</Deterministic>
     <AssemblyVersion>5.1.*</AssemblyVersion>
-    <Description>Mesh-based grid warp distortion effect for Paint.NET 5.x with GPU-accelerated rendering.</Description>
+    <Description>Grid Warpified mesh-based distortion effect for Paint.NET 5.x with GPU-accelerated rendering.</Description>
     <Authors>GridWarpPlugin Contributors</Authors>
-    <Product>GridWarpPlugin</Product>
+    <Product>Grid Warpified</Product>
+    <AssemblyTitle>Grid Warpified</AssemblyTitle>
     <Copyright>Copyright © 2025 GridWarpPlugin Contributors</Copyright>
   </PropertyGroup>
   <PropertyGroup>

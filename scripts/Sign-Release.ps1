@@ -1,8 +1,10 @@
 #Requires -Version 7.2
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Package')]
 param(
-    [Parameter(Mandatory)]
-    [string] $PackageDirectory
+    [Parameter(Mandatory, ParameterSetName = 'Package')]
+    [string] $PackageDirectory,
+    [Parameter(Mandatory, ParameterSetName = 'File')]
+    [string] $FilePath
 )
 $ErrorActionPreference = 'Stop'
 
@@ -16,14 +18,23 @@ foreach ($name in $required) {
         throw "Signing configuration missing: $($name). Refusing to produce an unsigned release."
     }
 }
-$directory = (Resolve-Path -LiteralPath $PackageDirectory).Path
-$names = @('LiquifiedPlugin.dll', 'GridWarpPlugin.dll', 'DocumentRectifyPlugin.dll')
-$files = foreach ($name in $names) {
-    $path = Join-Path $directory $name
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "Release package is incomplete: $($name)."
+if ($PSCmdlet.ParameterSetName -eq 'File') {
+    $files = @((Resolve-Path -LiteralPath $FilePath).Path)
+    if ([IO.Path]::GetExtension($files[0]) -ne '.exe' -and
+        [IO.Path]::GetFileName($files[0]) -notin @('uninst.e32.tmp', 'uninst.e64.tmp')) {
+        throw 'Installer signing requires an EXE or Inno temporary uninstaller file.'
     }
-    $path
+}
+else {
+    $directory = (Resolve-Path -LiteralPath $PackageDirectory).Path
+    $names = @('LiquifiedPlugin.dll', 'GridWarpPlugin.dll', 'DocumentRectifyPlugin.dll')
+    $files = foreach ($name in $names) {
+        $path = Join-Path $directory $name
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Release package is incomplete: $($name)."
+        }
+        $path
+    }
 }
 Import-Module ArtifactSigning -RequiredVersion 0.1.8 -ErrorAction Stop
 foreach ($file in $files) {
@@ -47,7 +58,9 @@ foreach ($file in $files) {
     Write-Output "Verified timestamped Authenticode signature: $([IO.Path]::GetFileName($file))"
 }
 # Checksums must describe the signed bytes, never the pre-signing compiler output.
-$hashes = foreach ($file in $files) {
-    '{0}  {1}' -f (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(), [IO.Path]::GetFileName($file)
+if ($PSCmdlet.ParameterSetName -eq 'Package') {
+    $hashes = foreach ($file in $files) {
+        '{0}  {1}' -f (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(), [IO.Path]::GetFileName($file)
+    }
+    [IO.File]::WriteAllLines((Join-Path $directory 'SHA256SUMS.txt'), $hashes, [Text.Encoding]::ASCII)
 }
-[IO.File]::WriteAllLines((Join-Path $directory 'SHA256SUMS.txt'), $hashes, [Text.Encoding]::ASCII)

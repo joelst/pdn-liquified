@@ -1,4 +1,9 @@
 <Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)EffectMenuIcons.cs" Link="EffectMenuIcons.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)DialogUi.cs" Link="DialogUi.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)EffectSupportInfo.cs" Link="EffectSupportInfo.cs" />
+  </ItemGroup>
   <PropertyGroup>
     <DeployPlugins Condition="'$(DeployPlugins)' == ''">false</DeployPlugins>
   </PropertyGroup>

@@ -11,12 +11,13 @@ using System;
 namespace GridWarpPlugin;
 
 /// <summary>
-/// GPU-accelerated Grid Warp effect for Paint.NET 5.x.
+/// GPU-accelerated Grid Warpified effect for Paint.NET 5.x.
 /// Uses <see cref="SampleMapRenderer"/> with RGSS multisampling for high-quality mesh-based distortion.
 /// A grid of draggable control points defines bilinear displacement across the image.
 /// Supports independent grid dimensions from 2 to 50 cells (max 51×51 = 2,601 control points).
 /// The effect performs local image processing only (no network or external I/O).
 /// </summary>
+[DistortionPlugins.EffectSupportInfo]
 internal sealed partial class GridWarpEffect : GpuImageEffect<GridWarpConfigToken>
 {
     // --- Device resources ---
@@ -28,7 +29,8 @@ internal sealed partial class GridWarpEffect : GpuImageEffect<GridWarpConfigToke
 
     public GridWarpEffect()
         : base(
-            "Grid Warp",
+            "Grid Warpified",
+            DistortionPlugins.EffectMenuIcons.GridWarp,
             "Tools",
             GpuImageEffectOptions.Create() with { IsConfigurable = true })
     {
@@ -198,7 +200,7 @@ internal sealed partial class GridWarpEffect : GpuImageEffect<GridWarpConfigToke
     }
 
     // ═════════════════════════════════════════════
-    //  GPU PIXEL SHADER — Grid Warp Sample Map
+    //  GPU PIXEL SHADER — Grid Warpified Sample Map
     // ═════════════════════════════════════════════
 
     /// <summary>

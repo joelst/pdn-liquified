@@ -8,6 +8,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      package_version:
+        description: 'Package version (for example 1.0.0-beta1 or 1.0.0)'
+        required: true
+        default: '1.0.0-dev'
+        type: string
 
 permissions:
   contents: read
@@ -22,6 +28,7 @@ jobs:
     env:
       DOTNET_NOLOGO: true
       NUGET_XMLDOC_MODE: skip
+      PACKAGE_VERSION: ${{ inputs.package_version || '1.0.0-dev' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -109,6 +116,7 @@ jobs:
           }
           $issues = Invoke-ScriptAnalyzer -Path install-plugins.ps1
           $issues += Invoke-ScriptAnalyzer -Path tests -Recurse
+          $issues += Invoke-ScriptAnalyzer -Path scripts -Recurse
           if ($issues) { $issues | Format-Table; throw 'PowerShell analyzer findings.' }
 
       - name: Download beta host
@@ -151,6 +159,7 @@ jobs:
           $dist = Join-Path $env:RUNNER_TEMP 'release-package'
 
           New-Item -ItemType Directory -Path $dist | Out-Null
+          $env:PACKAGE_VERSION | Set-Content -LiteralPath (Join-Path $dist 'PACKAGE-VERSION.txt') -Encoding ascii
 
           $filesToCopy = @(
             'Liquified/bin/Release/net9.0-windows/LiquifiedPlugin.dll',
@@ -172,6 +181,22 @@ jobs:
           }
 
           "RELEASE_PACKAGE_DIR=$($dist)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build and smoke-test Inno installer
+        if: matrix.host == 'stable'
+        shell: pwsh
+        run: |
+          $compiler = .\scripts\Install-InnoCompiler.ps1 -DestinationDirectory (Join-Path $env:RUNNER_TEMP 'inno-compiler')
+          $setup = .\scripts\Build-Installer.ps1 -PackageDirectory $env:RELEASE_PACKAGE_DIR -PackageVersion $env:PACKAGE_VERSION -CompilerPath $compiler
+          .\tests\InnoInstaller.Tests.ps1 -InstallerPath $setup -PackageDirectory $env:RELEASE_PACKAGE_DIR -ExpectedPackageVersion $env:PACKAGE_VERSION
+
+      - name: Upload unsigned development installer
+        if: matrix.host == 'stable'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdn-liquified-installer-unsigned
+          path: artifacts/installer/pdn-liquified-setup.exe
+          if-no-files-found: error
 
       - name: Upload release package
         uses: actions/upload-artifact@v4

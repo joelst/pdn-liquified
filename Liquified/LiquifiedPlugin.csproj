@@ -19,7 +19,8 @@
     <AssemblyVersion>5.1.*</AssemblyVersion>
     <Description>Interactive brush-based liquified effect plugin for Paint.NET 5.x with GPU-accelerated rendering.</Description>
     <Authors>LiquifiedPlugin Contributors</Authors>
-    <Product>LiquifiedPlugin</Product>
+    <Product>Liquified</Product>
+    <AssemblyTitle>Liquified</AssemblyTitle>
     <Copyright>Copyright © 2025 LiquifiedPlugin Contributors</Copyright>
   </PropertyGroup>
   <PropertyGroup>

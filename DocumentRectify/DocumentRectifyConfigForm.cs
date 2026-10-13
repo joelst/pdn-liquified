@@ -66,11 +66,19 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     _dpi = Math.Max(1f, DeviceDpi / 96f);
     BuildUI();
     WireEvents();
+    DistortionPlugins.DialogUi.AddControlInfo(this, aspectCombo, uiToolTip, "Choose the rectified document's aspect ratio. Preserve Detected keeps the estimated proportions; Fill Canvas stretches to the source canvas. Custom uses the width-to-height ratio below.");
     previewUpdateTimer.Tick += (_, _) => PushUpdate();
     DpiChanged += (_, e) => RescaleForDpi(e.DeviceDpiOld, e.DeviceDpiNew);
-    SystemColorsChanged += (_, _) => ApplySystemTheme(this);
-    ApplySystemTheme(this);
+    ApplySuiteTheme();
   }
+
+  protected override void OnThemeConfigChanged()
+  {
+    base.OnThemeConfigChanged();
+    if (canvas is not null) ApplySuiteTheme();
+  }
+
+  private void ApplySuiteTheme() => DistortionPlugins.DialogUi.ApplyTheme(this, canvas, IsAppThemeDark);
 
   protected override EffectConfigToken OnCreateInitialToken()
   {
@@ -162,7 +170,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
   {
     SuspendLayout();
 
-    Text = "Document Rectify - Ctrl+Page Up/Down selects corners; Tab moves focus";
+    Text = "Doc Recitified - Ctrl+Page Up/Down selects corners; Tab moves focus";
     ClientSize = new Size(S(1000), S(700));
     MinimumSize = new Size(S(600), S(400));
     FormBorderStyle = FormBorderStyle.Sizable;
@@ -184,7 +192,15 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
       BackColor = PanelBg
     };
 
-    leftPanel.Controls.Add(MakeAutoLabel("Quality:"));
+    var qualityHeader = new FlowLayoutPanel { Width = ctrlW, AutoSize = true, WrapContents = false };
+    qualityHeader.Controls.Add(MakeAutoLabel("Quality:"));
+    var qualityInfo = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.Info,
+      "Quality information", "RGSS multisampling for final output. Higher quality smooths edges but costs more GPU work.");
+    qualityInfo.Name = "controlInfo";
+    qualityInfo.Size = new Size(S(24), S(24));
+    qualityInfo.Click += (_, _) => MessageBox.Show(this, qualityInfo.AccessibleDescription, "Quality", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    qualityHeader.Controls.Add(qualityInfo);
+    leftPanel.Controls.Add(qualityHeader);
     qualitySlider = new TrackBar
     {
       Width = ctrlW,
@@ -210,11 +226,13 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     };
     leftPanel.Controls.Add(qualityValue);
 
-    resetCornersBtn = MakeButton("Reset Corners");
+    resetCornersBtn = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.Reset,
+      "Reset Corners", "Restore all four corners to the inset starting quadrilateral (10% to 90% of the image).");
     resetCornersBtn.Margin = new Padding(0, 0, 0, S(8));
     leftPanel.Controls.Add(resetCornersBtn);
 
-    autoDetectBtn = MakeButton("Auto Detect");
+    autoDetectBtn = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.Detect,
+      "Auto Detect", "Estimate document corners from image content. Inspect and adjust them before accepting.");
     autoDetectBtn.Margin = new Padding(0, 0, 0, S(10));
     leftPanel.Controls.Add(autoDetectBtn);
 
@@ -307,7 +325,6 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     cancelBtn.MinimumSize = new Size(S(90), cancelBtn.MinimumSize.Height);
 
     okCancelRow.Controls.AddRange(new Control[] { okBtn, cancelBtn });
-    leftPanel.Controls.Add(okCancelRow);
 
     AcceptButton = okBtn;
     CancelButton = cancelBtn;
@@ -324,6 +341,8 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
 
     Controls.Add(canvas);
     Controls.Add(leftPanel);
+    DistortionPlugins.DialogUi.AddChrome(this, leftPanel, canvas, uiToolTip, resetCornersBtn, autoDetectBtn, okBtn, cancelBtn);
+    okCancelRow.Dispose();
 
     ResumeLayout(true);
   }
@@ -332,7 +351,6 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
   {
     uiToolTip.SetToolTip(qualitySlider, "RGSS sample quality for final render");
     uiToolTip.SetToolTip(canvas, "Left-click or Ctrl+Page Up/Down selects a corner. Tab/Shift+Tab moves focus out of the canvas; F6 edits coordinates. Arrow keys move the corner; Shift+arrows move 10 image pixels. Right-click drag to pan; wheel to zoom.");
-    uiToolTip.SetToolTip(autoDetectBtn, "Estimate document corners from image content");
     uiToolTip.SetToolTip(aspectCombo, "Aspect ratio of the rectified output");
 
     qualitySlider.ValueChanged += (_, _) =>
@@ -811,34 +829,6 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
         editX ? corner.Y : (float)cornerY.Value / Math.Max(1, origSurface.Height - 1));
     SelectCorner(selectedCornerIndex);
     PushUpdate();
-  }
-
-  private void ApplySystemTheme(Control parent)
-  {
-    bool highContrast = SystemInformation.HighContrast;
-    foreach (Control control in parent.Controls)
-    {
-      control.ForeColor = highContrast ? SystemColors.ControlText : LabelColor;
-      if (control == canvas)
-      {
-        control.BackColor = highContrast ? SystemColors.Window : Color.FromArgb(48, 48, 48);
-      }
-      else if (control is NumericUpDown or ComboBox)
-      {
-        control.BackColor = highContrast ? SystemColors.Window : ControlBg;
-        control.ForeColor = highContrast ? SystemColors.WindowText : LabelColor;
-      }
-      else if (control is Button)
-      {
-        control.BackColor = highContrast ? SystemColors.Control : ControlBg;
-      }
-      else if (control is FlowLayoutPanel or TrackBar)
-      {
-        control.BackColor = highContrast ? SystemColors.Control : PanelBg;
-      }
-      ApplySystemTheme(control);
-    }
-    canvas?.Invalidate();
   }
 
   private Label MakeAutoLabel(string text)

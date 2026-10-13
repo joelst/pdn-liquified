@@ -55,7 +55,7 @@ jobs:
       - name: Checkout trusted signing scripts
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ steps.build.outputs.sha }}
           persist-credentials: false
 
       - name: Download validated build package
@@ -90,7 +90,7 @@ jobs:
           }
           Import-Module Pester -RequiredVersion 5.7.1
           $result = Invoke-Pester -Path .\tests\ReleaseSigning.Tests.ps1 -PassThru
-          if ($result.FailedCount -gt 0 -or $result.PassedCount -ne 6) { throw 'Signing regressions failed.' }
+          if ($result.FailedCount -gt 0 -or $result.PassedCount -ne 9) { throw 'Signing regressions failed.' }
 
       - name: Sign and verify final merged DLLs
         shell: pwsh
@@ -99,6 +99,19 @@ jobs:
           AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
           AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
         run: .\scripts\Sign-Release.ps1 -PackageDirectory .\signed-package
+
+      - name: Build signed Setup and Uninstall
+        shell: pwsh
+        env:
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          $compiler = .\scripts\Install-InnoCompiler.ps1 -DestinationDirectory (Join-Path $env:RUNNER_TEMP 'inno-compiler')
+          $version = (Get-Content -LiteralPath .\signed-package\PACKAGE-VERSION.txt -Raw).Trim()
+          $setup = .\scripts\Build-Installer.ps1 -PackageDirectory .\signed-package -PackageVersion $version -CompilerPath $compiler -Signed
+          .\tests\InnoInstaller.Tests.ps1 -InstallerPath $setup -PackageDirectory .\signed-package -ExpectedPackageVersion $version -RequireSigned
+          Copy-Item -LiteralPath $setup -Destination .\pdn-liquified-setup.exe
 
       - name: Package signed bytes and source provenance
         shell: pwsh
@@ -111,7 +124,9 @@ jobs:
             Set-Content -LiteralPath .\signed-package\BUILD.txt -Encoding ascii
           $zip = 'pdn-liquified-signed.zip'
           Compress-Archive -Path .\signed-package\* -DestinationPath $zip
-          '{0}  {1}' -f (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant(), $zip |
+          @($zip, 'pdn-liquified-setup.exe') | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant(), $_
+          } |
             Set-Content -LiteralPath .\SHA256SUMS.txt -Encoding ascii
 
       - name: Upload signed release
@@ -120,5 +135,6 @@ jobs:
           name: pdn-liquified-signed-${{ steps.build.outputs.sha }}
           path: |
             pdn-liquified-signed.zip
+            pdn-liquified-setup.exe
             SHA256SUMS.txt
           if-no-files-found: error

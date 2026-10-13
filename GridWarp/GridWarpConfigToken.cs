@@ -4,7 +4,7 @@ using System;
 namespace GridWarpPlugin;
 
 /// <summary>
-/// Config token for the Grid Warp effect, carrying grid dimensions and control point displacements.
+/// Config token for the Grid Warpified effect, carrying grid dimensions and control point displacements.
 /// </summary>
 [Serializable]
 public sealed class GridWarpConfigToken : EffectConfigToken
@@ -39,6 +39,12 @@ public sealed class GridWarpConfigToken : EffectConfigToken
     /// </summary>
     public float[] Displacements { get; set; } = Array.Empty<float>();
 
+    /// <summary>Preview editing constraints; frozen points cannot be moved.</summary>
+    public bool[] FrozenPoints { get; set; } = Array.Empty<bool>();
+
+    /// <summary>Editing groups. Zero is unlinked; equal positive IDs move together.</summary>
+    public int[] LinkedGroups { get; set; } = Array.Empty<int>();
+
     public GridWarpConfigToken() { }
 
     private GridWarpConfigToken(GridWarpConfigToken copyMe) : base(copyMe)
@@ -49,6 +55,8 @@ public sealed class GridWarpConfigToken : EffectConfigToken
         Displacements = copyMe.Displacements == null
             ? Array.Empty<float>()
             : (float[])copyMe.Displacements.Clone();
+        FrozenPoints = copyMe.FrozenPoints == null ? Array.Empty<bool>() : (bool[])copyMe.FrozenPoints.Clone();
+        LinkedGroups = copyMe.LinkedGroups == null ? Array.Empty<int>() : (int[])copyMe.LinkedGroups.Clone();
     }
 
     public override object Clone() => new GridWarpConfigToken(this);
