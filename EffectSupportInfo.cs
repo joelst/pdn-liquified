@@ -13,6 +13,6 @@ internal sealed class EffectSupportInfoAttribute : PluginSupportInfoAttribute
         Author = assembly.GetCustomAttribute<AssemblyCompanyAttribute>()!.Company;
         Copyright = assembly.GetCustomAttribute<AssemblyCopyrightAttribute>()!.Copyright;
         Version = assembly.GetName().Version!;
-        WebsiteUri = new Uri("https://github.com/joelst/pdn-liquify5");
+        WebsiteUri = new Uri("https://github.com/joelst/pdn-liquified");
     }
 }

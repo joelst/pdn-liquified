@@ -1015,9 +1015,11 @@ internal sealed class GridWarpConfigForm : EffectConfigForm2
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        if (keyData >= (Keys.Alt | Keys.D1) && keyData <= (Keys.Alt | Keys.D5))
+        int keyCode = (int)(keyData & Keys.KeyCode);
+        if ((keyData & Keys.Modifiers) == Keys.Alt &&
+            keyCode >= (int)Keys.D1 && keyCode <= (int)Keys.D5)
         {
-            SetEditMode((PointEditMode)((int)(keyData & Keys.KeyCode) - (int)Keys.D1));
+            SetEditMode((PointEditMode)(keyCode - (int)Keys.D1));
             return true;
         }
         if (keyData == Keys.Escape && editMode != PointEditMode.Move)

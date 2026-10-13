@@ -227,7 +227,7 @@ internal sealed class DocumentRectifyConfigForm : EffectConfigForm2
     leftPanel.Controls.Add(qualityValue);
 
     resetCornersBtn = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.Reset,
-      "Reset Corners", "Restore all four corners to the source rectangle.");
+      "Reset Corners", "Restore all four corners to the inset starting quadrilateral (10% to 90% of the image).");
     resetCornersBtn.Margin = new Padding(0, 0, 0, S(8));
     leftPanel.Controls.Add(resetCornersBtn);
 

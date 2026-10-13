@@ -62,6 +62,8 @@ OK to `%LOCALAPPDATA%\pdn-liquified\liquified-last-used.json`. Cancel does not c
 them. These shared preferences take precedence over saved defaults when the host
 creates a new token; existing host-managed tokens retain their own preferences.
 No manual file linking is required. Strokes, masks, and reconstruction are excluded.
+If saving last-used preferences fails, a warning is shown without blocking the
+image edit. Explicit Save Defaults failures are also reported.
 
 Automatic **per-file** persistence is not available: Paint.NET's public effect API
 does not expose a filename or stable document identifier. Registry storage would

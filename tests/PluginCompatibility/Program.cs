@@ -91,7 +91,7 @@ internal static class Program
                     !Equals(SupportProperty("Author"), plugin.GetCustomAttribute<AssemblyCompanyAttribute>()!.Company) ||
                     !Equals(SupportProperty("Copyright"), plugin.GetCustomAttribute<AssemblyCopyrightAttribute>()!.Copyright) ||
                     !Equals(SupportProperty("Version"), plugin.GetName().Version) ||
-                    !Equals(SupportProperty("WebsiteUri"), new Uri("https://github.com/joelst/pdn-liquify5")) ||
+                    !Equals(SupportProperty("WebsiteUri"), new Uri("https://github.com/joelst/pdn-liquified")) ||
                     string.IsNullOrWhiteSpace(SupportProperty("Author") as string))
                     throw new InvalidOperationException(name + " has incomplete or inconsistent menu-hover support information.");
                 if (!Equals(effectInfo.GetType().GetProperty("Name")!.GetValue(effectInfo), displayName) ||
@@ -184,6 +184,16 @@ internal static class Program
                         object automatic = startup.Invoke(null, new object[] { missing, settingsPath })!;
                         if ((double)tokenType.GetProperty("Strength")!.GetValue(automatic)! != 0.35)
                             throw new InvalidOperationException("Automatic last-used preferences were not loaded.");
+                        MethodInfo saveWithWarning = preferences.GetMethod("SaveWithWarning", BindingFlags.Static | BindingFlags.NonPublic)!;
+                        string? preferenceWarning = null;
+                        Action<string> reportFailure = message => preferenceWarning = message;
+                        saveWithWarning.Invoke(null, new object[] { token, Path.Combine(settingsPath, "blocked.json"), reportFailure });
+                        if (string.IsNullOrWhiteSpace(preferenceWarning))
+                            throw new InvalidOperationException("Optional preference write failure was not reported without throwing.");
+                        preferenceWarning = null;
+                        saveWithWarning.Invoke(null, new object[] { token, settingsPath, reportFailure });
+                        if (preferenceWarning is not null)
+                            throw new InvalidOperationException("Successful preference save reported an error.");
                     }
                     finally { File.Delete(settingsPath); }
                     var rail = (FlowLayoutPanel)formType.GetField("modeButtonsPanel", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
@@ -192,7 +202,7 @@ internal static class Program
                     MethodInfo shortcut = formType.GetMethod("ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic)!;
                     for (int i = 0; i < 10; i++)
                     {
-                        Keys key = Keys.Alt | (i == 9 ? Keys.D0 : Keys.D1 + i);
+                        Keys key = Keys.Alt | (i == 9 ? Keys.D0 : (Keys)((int)Keys.D1 + i));
                         object[] shortcutArgs = { new Message(), key };
                         if (!(bool)shortcut.Invoke(form, shortcutArgs)! ||
                             Convert.ToInt32(formType.GetField("selectedMode", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)) != i ||
@@ -434,6 +444,14 @@ internal static class Program
                             object[] arguments = { default(Message), shortcut };
                             if (!(bool)command.Invoke(form, arguments)!)
                                 throw new InvalidOperationException("Point mode shortcut was not handled.");
+                        }
+                        foreach (Keys invalidShortcut in new[] { Keys.D2, Keys.Control | Keys.D2,
+                            Keys.Alt | Keys.Shift | Keys.D2, Keys.Alt | Keys.D0, Keys.Alt | Keys.D6 })
+                        {
+                            object[] arguments = { default(Message), invalidShortcut };
+                            command.Invoke(form, arguments);
+                            if (Convert.ToInt32(formType.GetField("editMode", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)) != 0)
+                                throw new InvalidOperationException("Unrelated shortcut changed the grid editing mode.");
                         }
                         float[] beforeModes = (float[])displacement.Clone();
                         Label modeBanner = (Label)formType.GetField("modeStatus", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;

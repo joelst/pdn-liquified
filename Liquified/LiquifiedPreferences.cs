@@ -52,7 +52,21 @@ internal sealed class LiquifiedPreferences
 
     internal static void SaveDefaults(LiquifiedConfigToken token) => Save(token, DefaultsPath);
 
-    internal static void SaveLastUsed(LiquifiedConfigToken token) => Save(token, LastUsedPath);
+    internal static void SaveLastUsed(LiquifiedConfigToken token, Action<string> reportFailure) =>
+        SaveWithWarning(token, LastUsedPath, reportFailure);
+
+    internal static void SaveWithWarning(LiquifiedConfigToken token, string path, Action<string> reportFailure)
+    {
+        ArgumentNullException.ThrowIfNull(reportFailure);
+        try
+        {
+            Save(token, path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            reportFailure(ex.Message);
+        }
+    }
 
     internal static void Save(LiquifiedConfigToken token, string path)
     {

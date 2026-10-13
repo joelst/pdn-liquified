@@ -139,7 +139,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     darkTheme = IsAppThemeDark;
     BuildUI();
     WireEvents();
-    DistortionPlugins.DialogUi.AddControlInfo(this, brushSizeSlider, uiToolTip, "Brush radius in image pixels. Use [ and ] to change it while painting.");
+    DistortionPlugins.DialogUi.AddControlInfo(this, brushSizeSlider, uiToolTip, "Brush diameter in image pixels. Use [ and ] to change it while painting.");
     DistortionPlugins.DialogUi.AddControlInfo(this, strengthSlider, uiToolTip, "Displacement strength per application. Windows pen pressure can scale it further.");
     DistortionPlugins.DialogUi.AddControlInfo(this, densitySlider, uiToolTip, "Brush falloff: low density gives soft edges; high density gives more uniform intensity.");
     DistortionPlugins.DialogUi.AddControlInfo(this, rateSlider, uiToolTip, "Repeated applications per second while the pointer is held still.");
@@ -635,7 +635,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
 
   private void WireEvents()
   {
-    uiToolTip.SetToolTip(brushSizeSlider, "Brush radius in pixels");
+    uiToolTip.SetToolTip(brushSizeSlider, "Brush diameter in image pixels");
     uiToolTip.SetToolTip(strengthSlider, "Displacement strength per brush application; pen pressure can scale it further");
     uiToolTip.SetToolTip(densitySlider, "Brush falloff: low density gives softer edges; high density gives more uniform intensity");
     uiToolTip.SetToolTip(rateSlider, "Applications per second while the pointer is stationary");
@@ -2174,18 +2174,11 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     base.OnFormClosing(e);
     if (!e.Cancel && DialogResult == DialogResult.OK)
     {
-      try
-      {
-        var preferences = new LiquifiedConfigToken();
-        CopyPreferencesToToken(preferences);
-        LiquifiedPreferences.SaveLastUsed(preferences);
-      }
-      catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException or ArgumentException)
-      {
-        e.Cancel = true;
-        MessageBox.Show(this, "Could not save last-used settings. Retry OK after correcting the problem, or Cancel.\n\n" + ex.Message,
-          "Liquified preferences", MessageBoxButtons.OK, MessageBoxIcon.Error);
-      }
+      var preferences = new LiquifiedConfigToken();
+      CopyPreferencesToToken(preferences);
+      LiquifiedPreferences.SaveLastUsed(preferences, message =>
+        MessageBox.Show(this, "Your image edit will still be applied, but last-used settings could not be saved.\n\n" + message,
+          "Liquified preferences", MessageBoxButtons.OK, MessageBoxIcon.Warning));
     }
   }
 
