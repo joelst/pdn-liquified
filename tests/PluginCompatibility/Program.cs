@@ -231,12 +231,12 @@ internal static class Program
                         if (first.DisposeCount != 1 || last.DisposeCount != 1)
                             throw new InvalidOperationException("Liquified disposed effects twice after clearing the array.");
                     }
-                    Type icons = types.Single(type => type.Name == "EffectMenuIcons");
-                    string iconName = name == "LiquifiedPlugin" ? "Liquified" : name == "GridWarpPlugin" ? "GridWarp" : "DocumentRectify";
-                    System.Drawing.Bitmap icon = (System.Drawing.Bitmap)icons.GetProperty(iconName, BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
-                    if (icon.Width != 32 || icon.Height != 32 || icon.GetPixel(0, 0).A != 0)
-                        throw new InvalidOperationException(name + " menu icon is missing or lacks a transparent background.");
                 }
+                Type icons = types.Single(type => type.Name == "EffectMenuIcons");
+                string iconName = name == "LiquifiedPlugin" ? "Liquified" : name == "GridWarpPlugin" ? "GridWarp" : "DocumentRectify";
+                System.Drawing.Bitmap icon = (System.Drawing.Bitmap)icons.GetProperty(iconName, BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+                if (icon.Width != 32 || icon.Height != 32 || icon.GetPixel(0, 0).A != 0)
+                    throw new InvalidOperationException(name + " menu icon is missing or lacks a transparent background.");
                 if (name == "DocumentRectifyPlugin")
                 {
                     PropertyInfo aspectMode = tokenType.GetProperty("AspectMode")!;
@@ -628,14 +628,20 @@ internal static class Program
                         MethodInfo click = typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!;
                         click.Invoke(collapse, new object[] { EventArgs.Empty });
                         form.PerformLayout();
-                        if (collapse.AccessibleName != "Expand settings")
+                        ToolTip collapseTips = (ToolTip)formType.GetField("uiToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                        if (collapse.AccessibleName != "Expand settings" ||
+                            !collapse.AccessibleDescription!.StartsWith("Expand the settings panel", StringComparison.Ordinal) ||
+                            collapseTips.GetToolTip(collapse) != collapse.AccessibleDescription)
                             throw new InvalidOperationException(name + " settings could not collapse.");
                         if (name == "GridWarpPlugin" && Descendants(form).OfType<ComboBox>().Any(combo =>
                             !Descendants(Descendants(form).Single(control => control.Name == "commonSettingsBar")).Contains(combo)))
                             throw new InvalidOperationException("Grid Warpified common settings disappear when the sidebar collapses.");
                         click.Invoke(collapse, new object[] { EventArgs.Empty });
                         form.PerformLayout();
-                        if (collapse.AccessibleName != "Collapse settings" || suiteCanvas.Width < 100 || suiteCanvas.Height < 100 ||
+                        if (collapse.AccessibleName != "Collapse settings" ||
+                            !collapse.AccessibleDescription!.StartsWith("Collapse the settings panel", StringComparison.Ordinal) ||
+                            collapseTips.GetToolTip(collapse) != collapse.AccessibleDescription ||
+                            suiteCanvas.Width < 100 || suiteCanvas.Height < 100 ||
                             suiteCanvas.Bottom > suiteActions.Top)
                             throw new InvalidOperationException(name + " settings could not expand or overlap the canvas.");
                         if (name == "GridWarpPlugin")

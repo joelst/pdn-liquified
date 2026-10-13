@@ -245,7 +245,10 @@ internal static class DialogUi
             settings.Visible = !collapsed;
             collapse.Glyph = collapsed ? UiGlyph.Expand : UiGlyph.Collapse;
             collapse.AccessibleName = collapsed ? "Expand settings" : "Collapse settings";
-            tooltip.SetToolTip(collapse, collapse.AccessibleName);
+            collapse.AccessibleDescription = collapsed
+                ? "Expand the settings panel; editing and action buttons remain available."
+                : "Collapse the settings panel; editing and action buttons remain available.";
+            tooltip.SetToolTip(collapse, collapse.AccessibleDescription);
             collapse.Invalidate();
         };
         top.Controls.Add(collapse);
