@@ -28,7 +28,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   private TrackBar brushSizeSlider = null!, strengthSlider = null!, densitySlider = null!, rateSlider = null!, reconstructSlider = null!, qualitySlider = null!, meshSizeSlider = null!;
   private Label brushSizeValue = null!, strengthValue = null!, densityValue = null!, rateValue = null!, reconstructValue = null!, qualityValue = null!, meshSizeValue = null!, statusLabel = null!;
   private Button undoBtn = null!, redoBtn = null!, resetBtn = null!;
-  private DistortionPlugins.GlyphButton showMeshButton = null!, showMaskButton = null!, showBackdropButton = null!, penPressureButton = null!;
+  private DistortionPlugins.GlyphToggle showMeshButton = null!, showMaskButton = null!, showBackdropButton = null!, penPressureButton = null!;
   private Panel canvas = null!;
   private FlowLayoutPanel leftPanel = null!;
   private FlowLayoutPanel editingActions = null!;
@@ -484,14 +484,14 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       WrapContents = false, Margin = new Padding(0, 0, S(8), 0)
     };
     var viewRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
-    showMeshButton = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.Grid, "Show mesh", "");
+    showMeshButton = DistortionPlugins.DialogUi.Toggle(this, uiToolTip, DistortionPlugins.UiGlyph.Grid, "Show mesh", "");
     showMeshButton.Name = "showMeshToggle";
-    showMaskButton = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.Mask, "Hide mask", "");
+    showMaskButton = DistortionPlugins.DialogUi.Toggle(this, uiToolTip, DistortionPlugins.UiGlyph.Mask, "Hide mask", "");
     showMaskButton.Name = "showMaskToggle";
     showMaskButton.IsSelected = true;
-    showBackdropButton = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.Backdrop, "Show backdrop", "");
+    showBackdropButton = DistortionPlugins.DialogUi.Toggle(this, uiToolTip, DistortionPlugins.UiGlyph.Backdrop, "Show backdrop", "");
     showBackdropButton.Name = "showBackdropToggle";
-    penPressureButton = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.PenPressure, "Disable pen pressure", "");
+    penPressureButton = DistortionPlugins.DialogUi.Toggle(this, uiToolTip, DistortionPlugins.UiGlyph.PenPressure, "Disable pen pressure", "");
     penPressureButton.Name = "penPressureToggle";
     penPressureButton.IsSelected = true;
     viewRow.Controls.AddRange(new Control[] { showMeshButton, showMaskButton, showBackdropButton, penPressureButton });
@@ -695,27 +695,27 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       canvas?.Invalidate();
       if (!suppressUiEvents) PushUpdate();
     };
-    showMeshButton.Click += (_, _) =>
+    showMeshButton.CheckedChanged += (_, _) =>
     {
-      showMeshButton.IsSelected = !showMeshButton.IsSelected;
+      if (suppressUiEvents) return;
       UpdateToolbarToggles();
-      if (!suppressUiEvents) PushUpdate();
+      PushUpdate();
     };
-    showMaskButton.Click += (_, _) =>
+    showMaskButton.CheckedChanged += (_, _) =>
     {
-      showMaskButton.IsSelected = !showMaskButton.IsSelected;
+      if (suppressUiEvents) return;
       UpdateToolbarToggles();
-      if (!suppressUiEvents) PushUpdate();
+      PushUpdate();
     };
-    penPressureButton.Click += (_, _) =>
+    penPressureButton.CheckedChanged += (_, _) =>
     {
-      penPressureButton.IsSelected = !penPressureButton.IsSelected;
+      if (suppressUiEvents) return;
       UpdateToolbarToggles();
-      if (!suppressUiEvents) PushUpdate();
+      PushUpdate();
     };
-    showBackdropButton.Click += (_, _) =>
+    showBackdropButton.CheckedChanged += (_, _) =>
     {
-      showBackdropButton.IsSelected = !showBackdropButton.IsSelected;
+      if (suppressUiEvents) return;
       if (showBackdropButton.IsSelected)
       {
         try
@@ -728,7 +728,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         }
       }
       UpdateToolbarToggles();
-      if (!suppressUiEvents) PushUpdate();
+      PushUpdate();
     };
 
     undoBtn.Click += (_, _) => Undo();
@@ -1726,7 +1726,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   private void UpdateToolbarToggles()
   {
     meshSizeSlider.Parent!.Visible = showMeshButton.IsSelected;
-    void Describe(DistortionPlugins.GlyphButton button, string show, string hide, string description)
+    void Describe(DistortionPlugins.GlyphToggle button, string show, string hide, string description)
     {
       button.AccessibleName = button.IsSelected ? hide : show;
       button.AccessibleDescription = button.AccessibleName + (button.IsSelected ? ". Currently on. " : ". Currently off. ") + description;

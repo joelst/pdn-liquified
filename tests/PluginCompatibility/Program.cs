@@ -1,3 +1,4 @@
+using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
@@ -7,9 +8,10 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        if (args.Length != 1)
+        bool accessibilityOnly = args.Length == 2 && args[1] == "--accessibility";
+        if (args.Length != 1 && !accessibilityOnly)
         {
-            Console.Error.WriteLine("Usage: PluginCompatibility <plugin-directory>");
+            Console.Error.WriteLine("Usage: PluginCompatibility <plugin-directory> [--accessibility]");
             return 2;
         }
 
@@ -147,9 +149,10 @@ internal static class Program
                         ("penPressureButton", "UsePenPressure", "Disable pen pressure", "Enable pen pressure")
                     })
                     {
-                        Button toggle = (Button)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                        CheckBox toggle = (CheckBox)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
                         PropertyInfo selected = toggle.GetType().GetProperty("IsSelected", BindingFlags.Instance | BindingFlags.NonPublic)!;
                         foreach (bool enabled in new[] { false, true })
+                        foreach (string activation in new[] { "UIAutomation", "DefaultAction", "Click" })
                         {
                             tokenType.GetProperty(property)!.SetValue(token, enabled);
                             sync.Invoke(form, new[] { token });
@@ -160,7 +163,53 @@ internal static class Program
                                 toggleTips.GetToolTip(toggle) != toggle.AccessibleDescription ||
                                 !toggle.AccessibleDescription.Contains(enabled ? "Currently on." : "Currently off.", StringComparison.Ordinal))
                                 throw new InvalidOperationException("Liquified toolbar toggle state or guidance is inconsistent: " + field);
-                            typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(toggle, new object[] { EventArgs.Empty });
+                            _ = toggle.Handle;
+                            AccessibleObject accessibleToggle = toggle.AccessibilityObject;
+                            MethodInfo supportsPattern = accessibleToggle.GetType().GetMethod("IsPatternSupported", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                            object togglePattern = Enum.ToObject(supportsPattern.GetParameters()[0].ParameterType, 10015);
+                            PropertyInfo toggleState = accessibleToggle.GetType().GetProperty("ToggleState", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                            if (!(bool)supportsPattern.Invoke(accessibleToggle, new[] { togglePattern })! ||
+                                Convert.ToInt32(toggleState.GetValue(accessibleToggle)) != (enabled ? 1 : 0) ||
+                                toggle.AccessibilityObject.Role != AccessibleRole.CheckButton ||
+                                toggle.AccessibilityObject.State.HasFlag(AccessibleStates.Checked) != enabled ||
+                                toggle.Appearance != Appearance.Button)
+                                throw new InvalidOperationException("Liquified icon toggle does not expose native checked accessibility state: " + field);
+                            int stateChanges = 0;
+                            using var accessibilityChanges = accessibilityOnly ? new AccessibilityStateChanges(toggle.Handle) : null;
+                            EventHandler checkedChanged = (_, _) => stateChanges++;
+                            toggle.CheckedChanged += checkedChanged;
+                            try
+                            {
+                                if (activation == "UIAutomation")
+                                {
+                                    if (accessibilityChanges is not null)
+                                        accessibilityChanges.Toggle();
+                                    else
+                                        accessibleToggle.GetType().GetMethod("Toggle", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(accessibleToggle, null);
+                                }
+                                else if (activation == "DefaultAction")
+                                    accessibleToggle.DoDefaultAction();
+                                else
+                                    typeof(CheckBox).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(toggle, new object[] { EventArgs.Empty });
+                            }
+                            finally
+                            {
+                                toggle.CheckedChanged -= checkedChanged;
+                            }
+                            if (accessibilityChanges is not null)
+                            {
+                                long notificationDeadline = Environment.TickCount64 + 1000;
+                                do
+                                {
+                                    Application.DoEvents();
+                                    if (accessibilityChanges.Count > 0) break;
+                                    Thread.Sleep(10);
+                                } while (Environment.TickCount64 < notificationDeadline);
+                            }
+                            if (accessibilityChanges?.Count == 0 || stateChanges != 1 ||
+                                toggle.AccessibilityObject.State.HasFlag(AccessibleStates.Checked) == enabled ||
+                                Convert.ToInt32(toggleState.GetValue(accessibleToggle)) != (enabled ? 0 : 1))
+                                throw new InvalidOperationException($"Liquified accessible toggle action failed: {field}, {activation}, initial={enabled}, checkedChanges={stateChanges}, accessibilityEvents={accessibilityChanges?.Count}, checked={toggle.Checked}.");
                             object toggledToken = Activator.CreateInstance(tokenType)!;
                             formType.GetMethod("OnUpdateTokenFromDialog", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new[] { toggledToken });
                             if ((bool)tokenType.GetProperty(property)!.GetValue(toggledToken)! == enabled ||
@@ -186,6 +235,11 @@ internal static class Program
                                 }
                             }
                         }
+                    }
+                    if (accessibilityOnly)
+                    {
+                        Console.WriteLine("PASS Liquified native toggle states, UI Automation notifications, accessible actions, click actions, and token synchronization.");
+                        return 0;
                     }
                     tokenType.GetProperty("ShowMask")!.SetValue(token, false);
                     tokenType.GetProperty("ShowBackdrop")!.SetValue(token, true);
@@ -802,7 +856,7 @@ internal static class Program
                             collapseTips.GetToolTip(collapse) != collapse.AccessibleDescription ||
                             suiteCanvas.Width < 100 || suiteCanvas.Height < 100 ||
                             suiteCanvas.Bottom > suiteActions.Top)
-                            throw new InvalidOperationException(name + " settings could not expand or overlap the canvas.");
+                            throw new InvalidOperationException($"{name} settings could not expand or overlap the canvas: size={size}, canvas={suiteCanvas.Bounds}, actions={suiteActions.Bounds}, dpi={form.DeviceDpi}.");
                         if (name == "GridWarpPlugin")
                         {
                             MethodInfo setMode = formType.GetMethod("SetEditMode", BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -1019,6 +1073,51 @@ internal static class Program
     {
         public int DisposeCount { get; private set; }
         public void Dispose() => DisposeCount++;
+    }
+
+    private sealed class AccessibilityStateChanges : IDisposable
+    {
+        private readonly System.Windows.Automation.AutomationPropertyChangedEventHandler _callback;
+        private System.Windows.Automation.AutomationElement? _element;
+        private int _count;
+        public int Count => Volatile.Read(ref _count);
+
+        public AccessibilityStateChanges(IntPtr window)
+        {
+            _callback = (_, _) => Interlocked.Increment(ref _count);
+            RunClientAction(() =>
+            {
+                _element = System.Windows.Automation.AutomationElement.FromHandle(window);
+                System.Windows.Automation.Automation.AddAutomationPropertyChangedEventHandler(
+                    _element, System.Windows.Automation.TreeScope.Element, _callback,
+                    System.Windows.Automation.TogglePattern.ToggleStateProperty,
+                    System.Windows.Automation.AutomationElement.NameProperty);
+            });
+        }
+
+        public void Dispose()
+        {
+            RunClientAction(() => System.Windows.Automation.Automation.RemoveAutomationPropertyChangedEventHandler(_element!, _callback));
+        }
+
+        public void Toggle() => RunClientAction(() =>
+            ((System.Windows.Automation.TogglePattern)_element!.GetCurrentPattern(
+                System.Windows.Automation.TogglePattern.Pattern)).Toggle());
+
+        private static void RunClientAction(Action action)
+        {
+            // An in-process UIA client must run off the UI thread while it pumps provider requests.
+            Task task = Task.Run(action);
+            long deadline = Environment.TickCount64 + 10000;
+            while (!task.IsCompleted)
+            {
+                if (Environment.TickCount64 >= deadline)
+                    throw new TimeoutException("UI Automation client did not respond.");
+                Application.DoEvents();
+                Thread.Sleep(10);
+            }
+            task.GetAwaiter().GetResult();
+        }
     }
 
     private static IEnumerable<Control> Descendants(Control parent)
