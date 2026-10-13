@@ -24,7 +24,14 @@ internal static class Program
         {
             foreach (string name in new[] { "LiquifiedPlugin", "GridWarpPlugin", "DocumentRectifyPlugin" })
             {
-                Assembly plugin = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(directory, name + ".dll"));
+                string pluginPath = Path.Combine(directory, name + ".dll");
+                Assembly host = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(AppContext.BaseDirectory, "paintdotnet.dll"));
+                Type loaderType = host.GetType("PaintDotNet.Effects.DefaultEffectPluginLoader", throwOnError: true)!;
+                using IDisposable loader = (IDisposable)Activator.CreateInstance(loaderType, nonPublic: true)!;
+                object context = loaderType.GetMethod("CreateAssemblyLoadContext")!.Invoke(loader, new object[] { pluginPath })!;
+                Assembly plugin = (Assembly)loaderType.GetMethod("Load")!.Invoke(loader, new[] { context, pluginPath })!;
+                if (plugin.GetReferencedAssemblies().Any(reference => reference.Name is "ComputeSharp.Core" or "ComputeSharp.D2D1"))
+                    throw new InvalidOperationException(name + " is not self-contained; build the trimmed/merged plugin output before installing.");
                 Type[] types = plugin.GetTypes();
                 Type tokenType = types.Single(type => type.Name.EndsWith("ConfigToken", StringComparison.Ordinal));
                 object token = Activator.CreateInstance(tokenType)!;
@@ -45,6 +52,13 @@ internal static class Program
                     throw new InvalidOperationException(name + " did not clone its token.");
                 }
                 Type effectType = types.Single(type => type.Name is "LiquifiedEffect" or "GridWarpEffect" or "DocumentRectifyEffect");
+                MethodInfo registration = effectType.GetMethod("GetSampleMapRegistrationBlob", BindingFlags.Static | BindingFlags.NonPublic)
+                    ?? throw new InvalidOperationException(name + " has no shader registration check.");
+                object[] registrationArguments = { Guid.Empty };
+                object blob = registration.Invoke(null, registrationArguments)!;
+                if ((Guid)registrationArguments[0] == Guid.Empty ||
+                    blob is not ReadOnlyMemory<byte> { Length: > 0 })
+                    throw new InvalidOperationException(name + " failed shader registration.");
                 using IDisposable effect = (IDisposable)Activator.CreateInstance(effectType, nonPublic: true)!;
                 Type formType = types.Single(type => type.Name.EndsWith("ConfigForm", StringComparison.Ordinal));
                 using Form form = (Form)Activator.CreateInstance(formType, nonPublic: true)!;

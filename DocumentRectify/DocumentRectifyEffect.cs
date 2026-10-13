@@ -42,10 +42,13 @@ internal sealed partial class DocumentRectifyEffect : GpuImageEffect<DocumentRec
   protected override void OnSetDeviceContext(IDeviceContext deviceContext)
   {
     deviceContext.Factory.RegisterEffectFromBlob(
-        D2D1PixelShaderEffect.GetRegistrationBlob<DocumentRectifySampleMapShader>(out this.sampleMapShaderID));
+        GetSampleMapRegistrationBlob(out this.sampleMapShaderID));
 
     base.OnSetDeviceContext(deviceContext);
   }
+
+  internal static ReadOnlyMemory<byte> GetSampleMapRegistrationBlob(out Guid shaderId) =>
+      D2D1PixelShaderEffect.GetRegistrationBlob<DocumentRectifySampleMapShader>(out shaderId);
 
   protected override IDeviceImage OnCreateOutput(IDeviceContext deviceContext)
   {

@@ -48,9 +48,12 @@ internal sealed partial class GridWarpEffect : GpuImageEffect<GridWarpConfigToke
     protected override void OnSetDeviceContext(IDeviceContext deviceContext)
     {
         deviceContext.Factory.RegisterEffectFromBlob(
-            D2D1PixelShaderEffect.GetRegistrationBlob<GridWarpSampleMapShader>(out this.sampleMapShaderID));
+            GetSampleMapRegistrationBlob(out this.sampleMapShaderID));
         base.OnSetDeviceContext(deviceContext);
     }
+
+    internal static ReadOnlyMemory<byte> GetSampleMapRegistrationBlob(out Guid shaderId) =>
+        D2D1PixelShaderEffect.GetRegistrationBlob<GridWarpSampleMapShader>(out shaderId);
 
     // ─────────────────────────────────────────────
     //  Effect graph

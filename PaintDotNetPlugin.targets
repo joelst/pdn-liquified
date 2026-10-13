@@ -7,7 +7,8 @@
   <PropertyGroup>
     <DeployPlugins Condition="'$(DeployPlugins)' == ''">false</DeployPlugins>
   </PropertyGroup>
-  <Target Name="TrimAndMerge" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'Release'">
+  <!-- Every loadable DLL must isolate its shader descriptor ABI from the host's ComputeSharp version. -->
+  <Target Name="TrimAndMerge" AfterTargets="PostBuildEvent">
     <ItemGroup>
       <_ILLinkDll Include="$(PkgMicrosoft_NET_ILLink_Tasks)\tools\*\illink.dll" />
       <_ILLinkRefDir Include="$([System.IO.Path]::GetDirectoryName('%(ReferencePath.FullPath)'))" />

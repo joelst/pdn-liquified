@@ -152,6 +152,13 @@ jobs:
             DocumentRectify/bin/Release/net9.0-windows/DocumentRectifyPlugin.dll
           if-no-files-found: error
 
+      - name: Verify self-contained Debug plugins
+        shell: pwsh
+        run: |
+          dotnet build LiquifiedPlugins.slnx -c Debug --no-restore /p:PdnRoot="$env:PDN_ROOT" /p:DeployPlugins=false
+          if ($LASTEXITCODE -ne 0) { throw 'Debug build failed.' }
+          .\tests\Test-PluginCompatibility.ps1 -PortableDirectory $env:PDN_HOST -Configuration Debug
+
       - name: Create release package
         shell: pwsh
         run: |

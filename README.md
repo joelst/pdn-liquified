@@ -224,7 +224,7 @@ as new edits are recorded.
 ## Build
 
 ```powershell
-dotnet build LiquifiedPlugins.slnx                 # Debug
+dotnet build LiquifiedPlugins.slnx                 # Debug (self-contained merged DLLs)
 dotnet build -c Release LiquifiedPlugins.slnx      # Release (IL trim + ILRepack merge; no deployment)
 ```
 
@@ -234,10 +234,16 @@ Do not use development-main assemblies requiring .NET 11 to build these .NET 9 p
 Paint.NET 5.1.12 is the documented baseline, not a guarantee that every future
 stable/beta host works. Check the intended host versions before publishing.
 
-Release builds automatically:
+Debug and Release builds automatically:
 
 1. Trim unused ComputeSharp dependency IL via `Microsoft.NET.ILLink`
 2. Merge ComputeSharp assemblies via ILRepack
+
+Always install the final DLLs from `bin\<Configuration>\net9.0-windows`, never
+compiler intermediates from `obj`. Older unmerged Debug builds reference the host's
+ComputeSharp assembly and can fail on Paint.NET 5.2 with a missing `get_EffectFactory`
+shader member. Rebuild and replace all three DLLs with self-contained outputs;
+do not copy ComputeSharp DLLs into Paint.NET's installation to work around it.
 
 Deployment is opt-in: `/p:DeployPlugins=true` copies to the actual Windows Documents
 Effects directory. `/p:PdnEffectsDirOverride="<directory>"` overrides that target.
@@ -253,11 +259,13 @@ dotnet run --project tests\Liquified.RegressionTests -c Release -- --benchmark
 Invoke-Pester -Path .\tests\ReleaseSigning.Tests.ps1
 ```
 
-The compatibility check loads the merged Release plugins using the portable host's own
-runtime, resolves types, JIT-checks effect/dialog/token methods, clones tokens, and
+The compatibility check loads merged plugins using the portable host's own effect
+loader and runtime, rejects external ComputeSharp references, invokes shader
+registration, resolves types, JIT-checks effect/dialog/token methods, clones tokens, and
 constructs/disposes effects and dialogs. It also checks keyboard handlers and guidance,
 bounded Grid Warpified history, malformed aspect modes, and complete/partial effect-array
 cleanup. These are programmatic checks, not end-to-end UI interaction or GPU rendering.
+Use `-Configuration Debug` to check Debug outputs as well.
 Signing tests require Pester 5.7.1; see the signed-release workflow for setup.
 Also load Paint.NET and exercise all three effects (**Effects > Tools >
 Liquified**, **Grid Warpified**, and **Doc Recitified**), including mixed-DPI and pen input.

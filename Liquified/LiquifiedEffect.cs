@@ -38,9 +38,12 @@ internal sealed partial class LiquifiedEffect : GpuImageEffect<LiquifiedConfigTo
     protected override void OnSetDeviceContext(IDeviceContext deviceContext)
     {
         deviceContext.Factory.RegisterEffectFromBlob(
-            D2D1PixelShaderEffect.GetRegistrationBlob<LiquifiedSampleMapShader>(out sampleMapShaderID));
+            GetSampleMapRegistrationBlob(out sampleMapShaderID));
         base.OnSetDeviceContext(deviceContext);
     }
+
+    internal static ReadOnlyMemory<byte> GetSampleMapRegistrationBlob(out Guid shaderId) =>
+        D2D1PixelShaderEffect.GetRegistrationBlob<LiquifiedSampleMapShader>(out shaderId);
 
     protected override IDeviceImage OnCreateOutput(IDeviceContext deviceContext)
     {
