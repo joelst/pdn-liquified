@@ -111,6 +111,12 @@ jobs:
           dotnet run --project tests\Liquified.RegressionTests -c Release
           if ($LASTEXITCODE -ne 0) { throw 'Deformation regressions failed.' }
           .\tests\Installer.Tests.ps1
+          if (-not (Get-Module -ListAvailable Pester | Where-Object Version -eq '5.7.1')) {
+            Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -Repository PSGallery
+          }
+          Import-Module Pester -RequiredVersion 5.7.1
+          $result = Invoke-Pester -Path .\tests\ReleaseProvenance.Tests.ps1 -PassThru
+          if ($result.FailedCount -gt 0 -or $result.PassedCount -ne 15) { throw 'Build provenance regressions failed.' }
           if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
             Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
           }
