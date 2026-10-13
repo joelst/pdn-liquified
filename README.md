@@ -324,13 +324,18 @@ After creating a flat Release package with all three DLLs, `README.md`, `INSTALL
 and `LICENSE`, install Inno Setup 6.5.4 and run:
 
 ```powershell
-.\scripts\Build-Installer.ps1 -PackageDirectory 'F:\git\release-package'
+.\scripts\Build-Installer.ps1 -PackageDirectory 'F:\git\release-package' -PackageVersion '1.0.0'
 ```
 
 The compiler can be selected with `-CompilerPath`; output defaults to
 `artifacts\installer\pdn-liquified-setup.exe`. Add `-Signed` only with already
 signed/timestamped DLLs and configured Azure signing credentials/profile variables.
 Inno's signing hook signs both the generated uninstaller and Setup during compilation.
+`-PackageVersion` is required: use the release version without a `v` prefix,
+for example `1.0.0-beta1` or `1.0.0`. Installed Apps and installer product metadata
+use this identity, not the plugins' `5.1.*` compatibility assembly version.
+CI push builds use `1.0.0-dev`; dispatch Build with `package_version` for a release.
+The signed workflow preserves that build's `PACKAGE-VERSION.txt`.
 The helper requires PowerShell 7.2 or later; installing the resulting EXE does not.
 
 `tests\InnoInstaller.Tests.ps1` exercises an installer in an isolated directory.

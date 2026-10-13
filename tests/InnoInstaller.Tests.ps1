@@ -5,6 +5,8 @@ param(
     [string] $InstallerPath,
     [Parameter(Mandatory)]
     [string] $PackageDirectory,
+    [Parameter(Mandatory)]
+    [string] $ExpectedPackageVersion,
     [string] $TemporaryDirectory = [IO.Path]::GetTempPath(),
     [switch] $RequireSigned
 )
@@ -57,6 +59,12 @@ try {
     $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
         ('/DIR="{0}"' -f $destination), ('/LOG="{0}"' -f (Join-Path $root 'setup.log')))
     Invoke-SetupProcess -Path $InstallerPath -Arguments $arguments
+    if ((Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion -ne $ExpectedPackageVersion) {
+        throw 'Installed Apps version does not match the package version.'
+    }
+    if ([Diagnostics.FileVersionInfo]::GetVersionInfo($InstallerPath).ProductVersion.Trim() -ne $ExpectedPackageVersion) {
+        throw 'Installer product version does not match the package version.'
+    }
     foreach ($name in $plugins) {
         if ((Get-FileHash -LiteralPath (Join-Path $destination $name)).Hash -ne
             (Get-FileHash -LiteralPath (Join-Path $PackageDirectory $name)).Hash) {

@@ -3,6 +3,9 @@
 param(
     [Parameter(Mandatory)]
     [string] $PackageDirectory,
+    [Parameter(Mandatory)]
+    [ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$')]
+    [string] $PackageVersion,
     [string] $OutputDirectory = (Join-Path $PSScriptRoot '..\artifacts\installer'),
     [string] $CompilerPath,
     [switch] $Signed
@@ -35,11 +38,14 @@ if (-not (Test-Path -LiteralPath $CompilerPath -PathType Leaf)) {
 }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Path $output -Force | Out-Null
-$version = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $package 'LiquifiedPlugin.dll')).Version.ToString()
-if ($version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
-    throw 'LiquifiedPlugin.dll must have a four-part numeric assembly version.'
+$numericVersion = ($PackageVersion -split '-')[0]
+foreach ($part in $numericVersion.Split('.')) {
+    if ([long]$part -gt 65535) {
+        throw 'Package version components must not exceed 65535 for Windows version resources.'
+    }
 }
-$arguments = @("/DPackageDirectory=$($package)", "/DOutputDirectory=$($output)", "/DAppVersion=$($version)")
+$arguments = @("/DPackageDirectory=$($package)", "/DOutputDirectory=$($output)",
+    "/DAppVersion=$($PackageVersion)", "/DNumericVersion=$($numericVersion).0")
 if ($Signed) {
     $signer = Join-Path $PSScriptRoot 'Sign-Release.ps1'
     $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
@@ -54,6 +60,11 @@ if ($LASTEXITCODE -ne 0) {
 $setup = Join-Path $output 'pdn-liquified-setup.exe'
 if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) {
     throw 'Inno Setup did not produce the expected installer.'
+}
+$versionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($setup)
+if ($versionInfo.ProductVersion.Trim() -ne $PackageVersion -or
+    $versionInfo.FileVersion.Trim() -ne $PackageVersion) {
+    throw 'Installer version resources do not match the requested package version.'
 }
 if ($Signed) {
     $signature = Get-AuthenticodeSignature -LiteralPath $setup

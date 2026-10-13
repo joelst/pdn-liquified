@@ -685,6 +685,12 @@ internal static class Program
                         foreach (bool collapsed in new[] { false, true })
                         {
                             collapse.Invoke(form, new object[] { collapsed });
+                            Button sidebar = Descendants(form).OfType<Button>().Single(button => button.Name == "collapseSettings");
+                            ToolTip sidebarTips = (ToolTip)formType.GetField("uiToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                            if (sidebar.AccessibleName != (collapsed ? "Show advanced settings" : "Hide advanced settings") ||
+                                !sidebar.AccessibleDescription!.StartsWith(collapsed ? "Expand advanced settings." : "Collapse advanced settings.", StringComparison.Ordinal) ||
+                                sidebarTips.GetToolTip(sidebar) != sidebar.AccessibleDescription)
+                                throw new InvalidOperationException("Liquified sidebar accessibility and tooltip disagree with the current action.");
                             form.PerformLayout();
                             if (canvas.Height < 100 || canvas.Width < 100 || canvas.Top < top.Bottom ||
                                 canvas.Bottom > bottom.Top || bottom.Bottom > form.ClientSize.Height)

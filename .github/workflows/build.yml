@@ -8,6 +8,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      package_version:
+        description: 'Package version (for example 1.0.0-beta1 or 1.0.0)'
+        required: true
+        default: '1.0.0-dev'
+        type: string
 
 permissions:
   contents: read
@@ -22,6 +28,7 @@ jobs:
     env:
       DOTNET_NOLOGO: true
       NUGET_XMLDOC_MODE: skip
+      PACKAGE_VERSION: ${{ inputs.package_version || '1.0.0-dev' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -152,6 +159,7 @@ jobs:
           $dist = Join-Path $env:RUNNER_TEMP 'release-package'
 
           New-Item -ItemType Directory -Path $dist | Out-Null
+          $env:PACKAGE_VERSION | Set-Content -LiteralPath (Join-Path $dist 'PACKAGE-VERSION.txt') -Encoding ascii
 
           $filesToCopy = @(
             'Liquified/bin/Release/net9.0-windows/LiquifiedPlugin.dll',
@@ -179,8 +187,8 @@ jobs:
         shell: pwsh
         run: |
           $compiler = .\scripts\Install-InnoCompiler.ps1 -DestinationDirectory (Join-Path $env:RUNNER_TEMP 'inno-compiler')
-          $setup = .\scripts\Build-Installer.ps1 -PackageDirectory $env:RELEASE_PACKAGE_DIR -CompilerPath $compiler
-          .\tests\InnoInstaller.Tests.ps1 -InstallerPath $setup -PackageDirectory $env:RELEASE_PACKAGE_DIR
+          $setup = .\scripts\Build-Installer.ps1 -PackageDirectory $env:RELEASE_PACKAGE_DIR -PackageVersion $env:PACKAGE_VERSION -CompilerPath $compiler
+          .\tests\InnoInstaller.Tests.ps1 -InstallerPath $setup -PackageDirectory $env:RELEASE_PACKAGE_DIR -ExpectedPackageVersion $env:PACKAGE_VERSION
 
       - name: Upload unsigned development installer
         if: matrix.host == 'stable'

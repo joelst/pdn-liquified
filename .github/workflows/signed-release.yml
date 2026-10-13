@@ -108,8 +108,9 @@ jobs:
           AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
         run: |
           $compiler = .\scripts\Install-InnoCompiler.ps1 -DestinationDirectory (Join-Path $env:RUNNER_TEMP 'inno-compiler')
-          $setup = .\scripts\Build-Installer.ps1 -PackageDirectory .\signed-package -CompilerPath $compiler -Signed
-          .\tests\InnoInstaller.Tests.ps1 -InstallerPath $setup -PackageDirectory .\signed-package -RequireSigned
+          $version = (Get-Content -LiteralPath .\signed-package\PACKAGE-VERSION.txt -Raw).Trim()
+          $setup = .\scripts\Build-Installer.ps1 -PackageDirectory .\signed-package -PackageVersion $version -CompilerPath $compiler -Signed
+          .\tests\InnoInstaller.Tests.ps1 -InstallerPath $setup -PackageDirectory .\signed-package -ExpectedPackageVersion $version -RequireSigned
           Copy-Item -LiteralPath $setup -Destination .\pdn-liquified-setup.exe
 
       - name: Package signed bytes and source provenance

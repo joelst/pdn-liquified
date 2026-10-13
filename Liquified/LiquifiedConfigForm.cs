@@ -593,7 +593,10 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     leftPanel.Visible = !collapsed;
     ((DistortionPlugins.GlyphButton)sidebarButton).Glyph = collapsed ? DistortionPlugins.UiGlyph.Expand : DistortionPlugins.UiGlyph.Collapse;
     sidebarButton.AccessibleName = collapsed ? "Show advanced settings" : "Hide advanced settings";
-    uiToolTip.SetToolTip(sidebarButton, collapsed ? "Expand settings" : "Collapse settings");
+    sidebarButton.AccessibleDescription = collapsed
+      ? "Expand advanced settings. The mode rail and action buttons remain available."
+      : "Collapse advanced settings. The mode rail and action buttons remain available.";
+    uiToolTip.SetToolTip(sidebarButton, sidebarButton.AccessibleDescription);
     sidebarButton.Invalidate();
     canvas.Invalidate();
   }

@@ -28,12 +28,20 @@ pdn-liquified-signed.zip
 ├── README.md                    (Overview and feature descriptions)
 ├── LICENSE                      (MIT license)
 ├── SHA256SUMS.txt                (Checksums of signed DLLs)
+├── PACKAGE-VERSION.txt           (Explicit package/release identity)
 └── BUILD.txt                    (Source commit and originating Build run)
 ```
 
 The signed artifact also contains the installer and an external `SHA256SUMS.txt`
 covering both the installer and ZIP.
-The unsigned Build packages omit the signing checksums and `BUILD.txt`.
+The unsigned Build packages omit the signing checksums and `BUILD.txt`, but
+include `PACKAGE-VERSION.txt`. Push/PR builds use `1.0.0-dev`. For a release,
+dispatch Build on `main` with `package_version` set to the intended version,
+such as `1.0.0-beta1` or `1.0.0` (without the tag's `v` prefix). Signed release
+uses the downloaded package's version rather than deriving it from assembly metadata.
+Installed Apps and the EXE's text product/file versions retain prerelease labels;
+numeric Windows version resources use the three release components plus `.0`.
+Package components must be no greater than 65535.
 
 ## Installation Instructions
 
@@ -116,7 +124,9 @@ SmartScreen reputation, Paint.NET compatibility, or correct GPU behavior.
 
 ### Steps to Release
 
-1. Confirm the main-branch Build succeeded. Wait for **Signed release**, or dispatch
+1. Dispatch a main-branch Build with the intended `package_version`, and confirm
+   it succeeded. Check `PACKAGE-VERSION.txt` matches your intended release/tag.
+   Wait for **Signed release**, or dispatch
    it from `main` with that successful Build run ID. A PR Build cannot be signed by
    this workflow.
 2. Download the `pdn-liquified-signed-<source SHA>` artifact. Keep its EXE and ZIP unchanged.

@@ -7,11 +7,18 @@
 #ifndef OutputDirectory
   #error OutputDirectory is required.
 #endif
+#ifndef NumericVersion
+  #error NumericVersion is required.
+#endif
 
 [Setup]
 AppId={{E87EFCDA-0785-41CC-95A7-237057E641A6}
 AppName=Paint.NET Distortion Plugins
 AppVersion={#AppVersion}
+VersionInfoVersion={#NumericVersion}
+VersionInfoProductVersion={#NumericVersion}
+VersionInfoTextVersion={#AppVersion}
+VersionInfoProductTextVersion={#AppVersion}
 AppPublisher=pdn-liquified contributors
 AppPublisherURL=https://github.com/joelst/pdn-liquified
 AppSupportURL=https://github.com/joelst/pdn-liquified/issues
