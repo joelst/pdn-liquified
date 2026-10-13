@@ -56,6 +56,19 @@ internal static class Program
                     Type sharedUi = types.Single(type => type.Name == "DialogUi");
                     MethodInfo drawLock = sharedUi.GetMethod("DrawFreezeGlyph", BindingFlags.Static | BindingFlags.NonPublic)!;
                     MethodInfo createIcon = formType.GetMethod("CreateModeIcon", BindingFlags.Static | BindingFlags.NonPublic)!;
+                    foreach (int iconSize in new[] { 64, 128 })
+                    {
+                        using var pucker = (System.Drawing.Bitmap)createIcon.Invoke(null,
+                            new object[] { Enum.Parse(modeType, "Pucker"), iconSize, System.Drawing.Color.White })!;
+                        using var bloat = (System.Drawing.Bitmap)createIcon.Invoke(null,
+                            new object[] { Enum.Parse(modeType, "Bloat"), iconSize, System.Drawing.Color.White })!;
+                        int scale = iconSize / 64;
+                        if (pucker.GetPixel(40 * scale, 12 * scale).A < 128 ||
+                            bloat.GetPixel(40 * scale, 12 * scale).A > 32 ||
+                            bloat.GetPixel(35 * scale, 16 * scale).A < 128 ||
+                            pucker.GetPixel(35 * scale, 16 * scale).A > 32)
+                            throw new InvalidOperationException("Pucker/Bloat arrowheads do not point inward/outward respectively.");
+                    }
                     foreach (string modeName in new[] { "Freeze", "Unfreeze" })
                     {
                         using var actual = (System.Drawing.Bitmap)createIcon.Invoke(null,
@@ -101,14 +114,8 @@ internal static class Program
                     throw new InvalidOperationException(name + " has inconsistent public branding.");
                 if (name == "LiquifiedPlugin")
                 {
-                    foreach (string field in new[] { "showMeshCheck" })
-                    {
-                        Control toggle = (Control)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
-                        Control info = toggle.Parent!.Controls.Cast<Control>().Single(control => control.Name == "controlInfo");
-                        if (!info.AccessibleDescription!.Contains("final", StringComparison.OrdinalIgnoreCase) ||
-                            info.AccessibleName != toggle.AccessibleName + " information")
-                            throw new InvalidOperationException("Liquified view toggle lacks adjacent explanatory information: " + field);
-                    }
+                    if ((double)tokenType.GetProperty("ReconstructAmount")!.GetValue(token)! != 0)
+                        throw new InvalidOperationException("Liquified reconstruction should default to zero.");
                     if ((double)tokenType.GetProperty("Strength")!.GetValue(token)! != 0.25 ||
                         (double)tokenType.GetProperty("Density")!.GetValue(token)! != 0.25)
                         throw new InvalidOperationException("Liquified factory pressure/density are not 25%.");
@@ -118,6 +125,7 @@ internal static class Program
                     ToolTip toggleTips = (ToolTip)formType.GetField("uiToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
                     foreach (var (field, property, onAction, offAction) in new[]
                     {
+                        ("showMeshButton", "ShowMesh", "Hide mesh", "Show mesh"),
                         ("showMaskButton", "ShowMask", "Hide mask", "Show mask"),
                         ("showBackdropButton", "ShowBackdrop", "Hide backdrop", "Show backdrop"),
                         ("penPressureButton", "UsePenPressure", "Disable pen pressure", "Enable pen pressure")
@@ -295,7 +303,7 @@ internal static class Program
                             throw new InvalidOperationException("Liquified mode shortcut or accessible hint is incorrect.");
                     }
                     foreach (Button action in Descendants(form).OfType<Button>().Where(button =>
-                        button.AccessibleName is "Mask None" or "Mask All" or "Invert Mask" or "Reconstruct All" or "Restore All" or "Undo" or "Redo"))
+                        button.AccessibleName is "Mask None" or "Mask All" or "Invert Mask" or "Remove Deformation" or "Undo" or "Redo"))
                     {
                         ToolTip tips = (ToolTip)formType.GetField("uiToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
                         if (action.Image is null || string.IsNullOrWhiteSpace(tips.GetToolTip(action)) ||
@@ -808,26 +816,28 @@ internal static class Program
                                 sidebarTips.GetToolTip(sidebar) != sidebar.AccessibleDescription)
                                 throw new InvalidOperationException("Liquified sidebar accessibility and tooltip disagree with the current action.");
                             form.PerformLayout();
-                            foreach (string action in new[] { "Reconstruct All", "Restore All" })
+                            foreach (string field in new[] { "qualitySlider", "meshSizeSlider", "showMeshButton" })
                             {
-                                Button button = Descendants(form).OfType<Button>().Single(button => button.AccessibleName == action);
-                                if (!Descendants(top).Contains(button) || !button.Enabled)
-                                    throw new InvalidOperationException("Liquified reconstruction actions depend on the collapsed sidebar.");
+                                Control control = (Control)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                                if (!Descendants(top).Contains(control))
+                                    throw new InvalidOperationException("Liquified quality/mesh controls are not on the top bar.");
                             }
-                            if (collapsed)
+                            if (Descendants(form).OfType<Button>().Any(button => button.AccessibleName == "Reconstruct All"))
+                                throw new InvalidOperationException("Liquified retains the removed 100% reconstruction button.");
+                            Button restore = Descendants(form).OfType<Button>().Single(button => button.AccessibleName == "Remove Deformation");
+                            Control settings = (Control)formType.GetField("leftPanel", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                            if (!Descendants(settings).Contains(restore))
+                                throw new InvalidOperationException("Remove Deformation is not in the left settings bar.");
+                            if (!collapsed)
                             {
-                                Button reconstruct = Descendants(top).OfType<Button>().Single(button => button.AccessibleName == "Reconstruct All");
-                                typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(reconstruct, new object[] { EventArgs.Empty });
                                 TrackBar amount = (TrackBar)formType.GetField("reconstructSlider", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
-                                if (amount.Value != 100)
-                                    throw new InvalidOperationException("Top-bar Reconstruct All did not restore the original preview.");
-                                Button restore = Descendants(top).OfType<Button>().Single(button => button.AccessibleName == "Restore All");
+                                amount.Value = 60;
                                 typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(restore, new object[] { EventArgs.Empty });
                                 if (amount.Value != 0)
-                                    throw new InvalidOperationException("Top-bar Restore All did not reset reconstruction.");
+                                    throw new InvalidOperationException("Remove Deformation did not reset reconstruction.");
                                 formType.GetMethod("Undo", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
-                                if (amount.Value != 100)
-                                    throw new InvalidOperationException("Top-bar Restore All could not be undone.");
+                                if (amount.Value != 60)
+                                    throw new InvalidOperationException("Remove Deformation could not be undone.");
                                 formType.GetMethod("Undo", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
                                 ((System.Windows.Forms.Timer)formType.GetField("previewTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!).Stop();
                             }
@@ -838,6 +848,14 @@ internal static class Program
                             {
                                 if (group.Right > top.ClientSize.Width || group.Bottom > top.ClientSize.Height)
                                     throw new InvalidOperationException("Liquified top-bar controls are clipped at " + size + ".");
+                                foreach (Panel header in group.Controls.OfType<Panel>().Where(header => header.Controls.OfType<Label>().Count() == 2))
+                                {
+                                    Control[] children = header.Controls.Cast<Control>().ToArray();
+                                    if (children.Any(child => child.Right > header.ClientSize.Width) ||
+                                        children.SelectMany((child, index) => children.Skip(index + 1).Select(other => (child, other)))
+                                            .Any(pair => pair.child.Bounds.IntersectsWith(pair.other.Bounds)))
+                                        throw new InvalidOperationException("Liquified compact slider caption/value/info controls overlap.");
+                                }
                             }
                         }
                         var row = Descendants(bottom).Single(control => control.Name == "footerButtons");

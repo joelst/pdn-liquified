@@ -193,7 +193,7 @@ See [INSTALL.md](INSTALL.md) for detailed instructions and troubleshooting.
 - Freeze/Unfreeze to protect areas from distortion
 - Persistent brush/view preferences and Save Defaults (not per-file settings)
 - Always-visible mode icons, compact top-bar settings, and collapsible advanced settings
-- Ctrl+Z/Ctrl+Y undo/redo; Restore All removes deformation while retaining the mask
+- Ctrl+Z/Ctrl+Y undo/redo; Remove Deformation removes deformation while retaining the mask
 
 ### Grid Warpified
 - Independent grid dimensions from 2 to 50 cells (up to 2,601 control points)

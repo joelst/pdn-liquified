@@ -31,21 +31,22 @@ Paint.NET supplies the installed DLL location.
 - **Zoom and pan** -- mouse-wheel zoom with 10%--800% limits, right-click pan,
   double-click fit-to-window (automatic fit can fall outside the wheel limits)
 - **Adjustable parameters** -- Brush Size, Pressure/Strength, Density, stationary Rate, Quality, optional Windows pen pressure
-- **Reconstruction and masks** -- global reconstruction amount, local Reconstruct brush, Restore All, Mask None/All/Invert, and independent mask visibility
+- **Reconstruction and masks** -- global reconstruction amount, local Reconstruct brush, Remove Deformation, Mask None/All/Invert, and independent mask visibility
 - **View options** -- deformation mesh with adjustable spacing, document-composition backdrop, selection-aware preview, and processing status
-- **Undo / Redo** with `Ctrl+Z` / `Ctrl+Y`; Restore All removes deformation
+- **Undo / Redo** with `Ctrl+Z` / `Ctrl+Y`; Remove Deformation removes deformation
   while preserving the mask
-- **Common-settings bar** -- brush size, pressure, density, and rate stay above
-  the canvas, alongside Show Mask, Show Backdrop, and Use Pen Pressure icon toggles.
+- **Common-settings bar** -- brush size, pressure, density, rate, quality, and mesh
+  size stay above the canvas, alongside Show Mesh, Show Mask, Show Backdrop, and
+  Use Pen Pressure icon toggles.
   Filled icons indicate enabled options; hover for current-action guidance.
-  Reconstruct All and Restore All are also on the top bar. A collapse/expand
+  Remove Deformation is in the left settings bar. A collapse/expand
   chevron toggles the advanced left panel without hiding these controls, Undo,
   Redo, OK, or Cancel. The global reconstruction amount remains in advanced settings.
 - **Persistent mode rail** -- the ten larger brush icons remain on the left when
   settings are hidden. `Alt+1` through `Alt+9` select Forward Warp through Freeze;
   `Alt+0` selects Unfreeze. Tooltips and accessible descriptions list each hotkey.
 - **Theme-aware controls** -- follows Paint.NET light/dark theme changes and Windows
-  high-contrast colors. Mask None/All/Invert, Reconstruct All, Restore, Undo, and
+  high-contrast colors. Mask None/All/Invert, Remove Deformation, Undo, and
   Redo use drawn icons with descriptive tooltips. Footer buttons share a common
   height, with processing status on a separate row.
 - **Gentler starting brush** -- pressure and density default to 25%.
@@ -59,6 +60,11 @@ range is 5%--100%, density is 0%--100%, and Rate is 1--120 applications per seco
 Stationary Rate does not apply Forward Warp because that mode needs movement.
 Quality ranges from 1 to 4, generating 1 to 16 GPU samples per output pixel;
 it does not increase CPU preview sampling.
+
+Global Reconstruct Amount defaults to **0%**, preserving the deformation you paint.
+Increasing it blends the whole deformation back toward the original; 100% shows
+the original. It is not the strength of the local Reconstruct brush. Reconstruction
+is excluded from saved defaults and last-used preferences.
 
 Liquified automatically saves last-used brush/display preferences when you click
 OK to `%LOCALAPPDATA%\pdn-liquified\liquified-last-used.json`. Cancel does not change
@@ -79,8 +85,8 @@ Liquified and Grid Warpified use the same closed-lock/open-lock Freeze/Unfreeze
 glyphs, blue frozen-state color, and selected-mode palette. High-contrast mode
 uses Windows system colors instead.
 Hover an info icon for a description or click it to open a readable explanation.
-Settings can be collapsed without losing access to OK/Cancel or editing actions.
-Liquified's Show Mesh checkbox has an adjacent info icon. The top-bar Mask and
+Settings can be collapsed without losing access to OK/Cancel, Undo/Redo, or brush modes.
+Liquified's top-bar Mesh, Mask, and
 Backdrop icons explain their preview-only behavior through tooltips and accessible
 descriptions; hiding the mask does not remove freeze protection.
 Forward Warp is a **pull/drag** deformation, not a color-blending smudge brush.
@@ -114,7 +120,7 @@ if their total area remains within the budget and each dimension meets the limit
 An 8K UHD image (7680 x 4320) exceeds the current budget; merely raising the cap
 would increase the estimated working buffers to roughly 4 GiB before host overhead.
 
-Mask-wide actions and Restore All participate in undo/redo; Restore All removes
+Mask-wide actions and Remove Deformation participate in undo/redo; Remove Deformation removes
 deformation while retaining protection. Liquified retains **256 undo steps**, using shared
 stroke history rather than full-image snapshots. The mesh solves the inverse sampling
 field for forward vertex locations so it follows visible content. Segments that cannot
