@@ -101,7 +101,7 @@ internal static class Program
                     throw new InvalidOperationException(name + " has inconsistent public branding.");
                 if (name == "LiquifiedPlugin")
                 {
-                    foreach (string field in new[] { "showMeshCheck", "showMaskCheck", "showBackdropCheck" })
+                    foreach (string field in new[] { "showMeshCheck" })
                     {
                         Control toggle = (Control)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
                         Control info = toggle.Parent!.Controls.Cast<Control>().Single(control => control.Name == "controlInfo");
@@ -114,6 +114,91 @@ internal static class Program
                         throw new InvalidOperationException("Liquified factory pressure/density are not 25%.");
                     MethodInfo sync = formType.GetMethod("SyncUIFromToken", BindingFlags.Instance | BindingFlags.NonPublic)!;
                     sync.Invoke(form, new[] { token });
+                    Control toolbar = Descendants(form).Single(control => control.Name == "commonSettingsBar");
+                    ToolTip toggleTips = (ToolTip)formType.GetField("uiToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    foreach (var (field, property, onAction, offAction) in new[]
+                    {
+                        ("showMaskButton", "ShowMask", "Hide mask", "Show mask"),
+                        ("showBackdropButton", "ShowBackdrop", "Hide backdrop", "Show backdrop"),
+                        ("penPressureButton", "UsePenPressure", "Disable pen pressure", "Enable pen pressure")
+                    })
+                    {
+                        Button toggle = (Button)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                        PropertyInfo selected = toggle.GetType().GetProperty("IsSelected", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                        foreach (bool enabled in new[] { false, true })
+                        {
+                            tokenType.GetProperty(property)!.SetValue(token, enabled);
+                            sync.Invoke(form, new[] { token });
+                            if (!Descendants(toolbar).Contains(toggle) || toggle.Text.Length != 0 ||
+                                (bool)selected.GetValue(toggle)! != enabled ||
+                                toggle.AccessibleName != (enabled ? onAction : offAction) ||
+                                !toggle.AccessibleDescription!.StartsWith(toggle.AccessibleName + ".", StringComparison.Ordinal) ||
+                                toggleTips.GetToolTip(toggle) != toggle.AccessibleDescription ||
+                                !toggle.AccessibleDescription.Contains(enabled ? "Currently on." : "Currently off.", StringComparison.Ordinal))
+                                throw new InvalidOperationException("Liquified toolbar toggle state or guidance is inconsistent: " + field);
+                            typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(toggle, new object[] { EventArgs.Empty });
+                            object toggledToken = Activator.CreateInstance(tokenType)!;
+                            formType.GetMethod("OnUpdateTokenFromDialog", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new[] { toggledToken });
+                            if ((bool)tokenType.GetProperty(property)!.GetValue(toggledToken)! == enabled ||
+                                (bool)selected.GetValue(toggle)! == enabled)
+                                throw new InvalidOperationException("Liquified toolbar toggle did not update its token: " + field);
+                        }
+                    }
+                    tokenType.GetProperty("ShowMask")!.SetValue(token, false);
+                    tokenType.GetProperty("ShowBackdrop")!.SetValue(token, true);
+                    tokenType.GetProperty("UsePenPressure")!.SetValue(token, false);
+                    sync.Invoke(form, new[] { token });
+                    FieldInfo penSourceField = formType.GetField("origSurface", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    using (IDisposable source = (IDisposable)Activator.CreateInstance(penSourceField.FieldType, new object[] { 64, 64 })!)
+                    {
+                        penSourceField.SetValue(form, source);
+                        formType.GetField("initialFitDone", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, true);
+                        formType.GetField("zoom", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, 1f);
+                        formType.GetField("pan", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, System.Drawing.PointF.Empty);
+                        MethodInfo penInput = formType.GetMethod("HandlePenPointer", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                        try
+                        {
+                            foreach (var (enabled, reportsPressure, expectedStart, expectedMove) in new[]
+                            {
+                                (true, true, 0.25f, 0.75f),
+                                (false, true, 1f, 1f),
+                                (true, false, 1f, 1f)
+                            })
+                            {
+                                tokenType.GetProperty("UsePenPressure")!.SetValue(token, enabled);
+                                tokenType.GetProperty("Mode")!.SetValue(token, Enum.ToObject(tokenType.GetProperty("Mode")!.PropertyType, 2));
+                                sync.Invoke(form, new[] { token });
+                                penInput.Invoke(form, new object[] { new System.Drawing.Point(10, 10), 0.25f, 0, reportsPressure });
+                                penInput.Invoke(form, new object[] { new System.Drawing.Point(15, 10), 0.75f, 1, reportsPressure });
+                                formType.GetMethod("ApplyRateTick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
+                                penInput.Invoke(form, new object[] { new System.Drawing.Point(15, 10), 0.75f, 2, reportsPressure });
+                                System.Collections.IList history = (System.Collections.IList)formType.GetField("strokes", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                                object stroke = history[history.Count - 1]!;
+                                System.Collections.IList points = (System.Collections.IList)stroke.GetType().GetProperty("Points")!.GetValue(stroke)!;
+                                if (points.Count != 3 || ((float[])points[0]!)[2] != expectedStart ||
+                                    ((float[])points[1]!)[2] != expectedMove || ((float[])points[2]!)[2] != expectedMove ||
+                                    (bool)formType.GetField("pointerCaptureActive", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)! ||
+                                    ((System.Windows.Forms.Timer)formType.GetField("rateTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!).Enabled)
+                                    throw new InvalidOperationException("Liquified pen pressure or full-intensity fallback failed.");
+                            }
+                            MethodInfo mouseDown = formType.GetMethod("Canvas_MouseDown", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                            Control penCanvas = (Control)formType.GetField("canvas", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                            mouseDown.Invoke(form, new object[] { penCanvas, new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0) });
+                            object activeStroke = formType.GetField("currentStroke", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                            System.Collections.IList mousePoints = (System.Collections.IList)activeStroke.GetType().GetProperty("Points")!.GetValue(activeStroke)!;
+                            if (((float[])mousePoints[0]!)[2] != 1f ||
+                                (float)formType.GetField("lastPointerPressure", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)! != 1f)
+                                throw new InvalidOperationException("Mouse input retained pressure from the previous pen stroke.");
+                            formType.GetMethod("Canvas_MouseUp", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form,
+                                new object[] { penCanvas, new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0) });
+                        }
+                        finally
+                        {
+                            penSourceField.SetValue(form, null);
+                            formType.GetMethod("ResetStrokes", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
+                            ((System.Windows.Forms.Timer)formType.GetField("previewTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!).Stop();
+                        }
+                    }
                     foreach (string field in new[] { "strengthSlider", "densitySlider" })
                     {
                         TrackBar slider = (TrackBar)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
@@ -133,7 +218,7 @@ internal static class Program
                     tokenType.GetProperty("Mode")!.SetValue(token, Enum.ToObject(tokenType.GetProperty("Mode")!.PropertyType, 2));
                     object roundTrip = Activator.CreateInstance(tokenType)!;
                     formType.GetMethod("OnUpdateTokenFromDialog", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new[] { roundTrip });
-                    foreach (string property in new[] { "Strength", "Density", "MeshSize", "ShowMesh", "SidebarCollapsed", "Mode" })
+                    foreach (string property in new[] { "Strength", "Density", "MeshSize", "ShowMesh", "ShowMask", "ShowBackdrop", "UsePenPressure", "SidebarCollapsed", "Mode" })
                     {
                         PropertyInfo setting = tokenType.GetProperty(property)!;
                         if (!Equals(setting.GetValue(token), setting.GetValue(roundTrip)) ||
@@ -157,7 +242,7 @@ internal static class Program
                         tokenType.GetProperty("ReconstructAmount")!.SetValue(token, 0.8);
                         preferences.GetMethod("Save", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new[] { token, settingsPath });
                         object restored = preferences.GetMethod("Load", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { settingsPath })!;
-                        foreach (string property in new[] { "Strength", "Density", "MeshSize", "ShowMesh", "SidebarCollapsed", "Mode" })
+                        foreach (string property in new[] { "Strength", "Density", "MeshSize", "ShowMesh", "ShowMask", "ShowBackdrop", "UsePenPressure", "SidebarCollapsed", "Mode" })
                         {
                             PropertyInfo setting = tokenType.GetProperty(property)!;
                             if (!Equals(setting.GetValue(token), setting.GetValue(restored)))
@@ -723,6 +808,29 @@ internal static class Program
                                 sidebarTips.GetToolTip(sidebar) != sidebar.AccessibleDescription)
                                 throw new InvalidOperationException("Liquified sidebar accessibility and tooltip disagree with the current action.");
                             form.PerformLayout();
+                            foreach (string action in new[] { "Reconstruct All", "Restore All" })
+                            {
+                                Button button = Descendants(form).OfType<Button>().Single(button => button.AccessibleName == action);
+                                if (!Descendants(top).Contains(button) || !button.Enabled)
+                                    throw new InvalidOperationException("Liquified reconstruction actions depend on the collapsed sidebar.");
+                            }
+                            if (collapsed)
+                            {
+                                Button reconstruct = Descendants(top).OfType<Button>().Single(button => button.AccessibleName == "Reconstruct All");
+                                typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(reconstruct, new object[] { EventArgs.Empty });
+                                TrackBar amount = (TrackBar)formType.GetField("reconstructSlider", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                                if (amount.Value != 100)
+                                    throw new InvalidOperationException("Top-bar Reconstruct All did not restore the original preview.");
+                                Button restore = Descendants(top).OfType<Button>().Single(button => button.AccessibleName == "Restore All");
+                                typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(restore, new object[] { EventArgs.Empty });
+                                if (amount.Value != 0)
+                                    throw new InvalidOperationException("Top-bar Restore All did not reset reconstruction.");
+                                formType.GetMethod("Undo", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
+                                if (amount.Value != 100)
+                                    throw new InvalidOperationException("Top-bar Restore All could not be undone.");
+                                formType.GetMethod("Undo", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
+                                ((System.Windows.Forms.Timer)formType.GetField("previewTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!).Stop();
+                            }
                             if (canvas.Height < 100 || canvas.Width < 100 || canvas.Top < top.Bottom ||
                                 canvas.Bottom > bottom.Top || bottom.Bottom > form.ClientSize.Height)
                                 throw new InvalidOperationException("Liquified bars overlap or leave no usable canvas at " + size + ".");

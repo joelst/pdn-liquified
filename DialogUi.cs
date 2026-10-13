@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace DistortionPlugins;
 
-internal enum UiGlyph { Info, Collapse, Expand, Undo, Redo, Reset, Detect, Grid, Move, Freeze, Unfreeze, Link, Unlink }
+internal enum UiGlyph { Info, Collapse, Expand, Undo, Redo, Reset, Detect, Grid, Move, Freeze, Unfreeze, Link, Unlink, Mask, Backdrop, PenPressure }
 
 internal sealed class GlyphButton : Button
 {
@@ -57,6 +57,29 @@ internal sealed class GlyphButton : Button
         else if (Glyph is UiGlyph.Freeze or UiGlyph.Unfreeze)
         {
             DialogUi.DrawFreezeGlyph(graphics, pen, Glyph == UiGlyph.Unfreeze);
+        }
+        else if (Glyph == UiGlyph.Mask)
+        {
+            graphics.DrawEllipse(pen, 4, 4, 16, 16);
+            using var fill = new SolidBrush(pen.Color);
+            graphics.FillPie(fill, 4, 4, 16, 16, 90, 180);
+        }
+        else if (Glyph == UiGlyph.Backdrop)
+        {
+            graphics.DrawRectangle(pen, 3, 3, 12, 12);
+            using var fill = new SolidBrush(BackColor);
+            graphics.FillRectangle(fill, 9, 9, 12, 12);
+            graphics.DrawRectangle(pen, 9, 9, 12, 12);
+            graphics.DrawLine(pen, 9, 15, 21, 15);
+            graphics.DrawLine(pen, 15, 9, 15, 21);
+        }
+        else if (Glyph == UiGlyph.PenPressure)
+        {
+            graphics.DrawPolygon(pen, new[] { new PointF(5, 17), new PointF(8, 10), new PointF(15, 3), new PointF(20, 8), new PointF(13, 15) });
+            graphics.DrawLine(pen, 8, 10, 13, 15);
+            graphics.DrawLine(pen, 5, 21, 19, 21);
+            graphics.DrawLine(pen, 16, 17, 18, 15);
+            graphics.DrawLine(pen, 20, 18, 22, 18);
         }
         else if (Glyph is UiGlyph.Link or UiGlyph.Unlink)
         {

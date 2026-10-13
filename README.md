@@ -36,8 +36,11 @@ Paint.NET supplies the installed DLL location.
 - **Undo / Redo** with `Ctrl+Z` / `Ctrl+Y`; Restore All removes deformation
   while preserving the mask
 - **Common-settings bar** -- brush size, pressure, density, and rate stay above
-  the canvas; a collapse/expand chevron toggles the advanced left panel. Undo, redo,
-  restore, OK, and Cancel remain available when the panel is hidden.
+  the canvas, alongside Show Mask, Show Backdrop, and Use Pen Pressure icon toggles.
+  Filled icons indicate enabled options; hover for current-action guidance.
+  Reconstruct All and Restore All are also on the top bar. A collapse/expand
+  chevron toggles the advanced left panel without hiding these controls, Undo,
+  Redo, OK, or Cancel. The global reconstruction amount remains in advanced settings.
 - **Persistent mode rail** -- the ten larger brush icons remain on the left when
   settings are hidden. `Alt+1` through `Alt+9` select Forward Warp through Freeze;
   `Alt+0` selects Unfreeze. Tooltips and accessible descriptions list each hotkey.
@@ -77,16 +80,22 @@ glyphs, blue frozen-state color, and selected-mode palette. High-contrast mode
 uses Windows system colors instead.
 Hover an info icon for a description or click it to open a readable explanation.
 Settings can be collapsed without losing access to OK/Cancel or editing actions.
-Liquified's Show Mesh, Show Mask, and Show Backdrop toggles each have an adjacent
-info icon describing their preview-only behavior; hiding the mask does not remove
-freeze protection.
+Liquified's Show Mesh checkbox has an adjacent info icon. The top-bar Mask and
+Backdrop icons explain their preview-only behavior through tooltips and accessible
+descriptions; hiding the mask does not remove freeze protection.
 Forward Warp is a **pull/drag** deformation, not a color-blending smudge brush.
 
 Liquified keyboard controls: `[`/`]` or keypad minus/plus changes brush size; arrows
 move and apply the keyboard brush (Shift uses a larger step); Ctrl+arrows pans.
 `Ctrl+0` resets zoom/pan, and `Ctrl+Z`/`Ctrl+Y` undo/redo. Focused sliders keep their
-native arrow-key behavior. Pen pressure requires a driver reporting Windows pointer
-pressure; otherwise brush intensity uses full pressure.
+native arrow-key behavior. Pen pressure uses a separate Windows `WM_POINTER` /
+`GetPointerPenInfo` input path on the plugin's own canvas, not Paint.NET's internal
+pen system (which is not exposed through the public plugin API). A compatible
+Windows pen driver must report pressure; mouse input and unsupported drivers use
+full intensity. The top-bar pen icon enables pressure scaling, not hardware
+detection: the status shows a live **Pen: percentage** during a pressure-reporting
+stroke, or the full-intensity fallback. This path has not been verified with a
+physical pen; enabling the option alone does not prove device compatibility.
 
 CPU preview uses bilinear image sampling; final Quality controls GPU RGSS multisampling.
 Both use the same full-resolution inverse displacement map, with no stroke-count cap
