@@ -9,3 +9,4 @@ obj/
 paintdotnet_src/
 build.log
 artifacts/
+testResults.xml
