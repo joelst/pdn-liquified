@@ -180,17 +180,19 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       foreach (Control control in parent.Controls)
       {
         control.ForeColor = control is Label { Tag: "hint" } && !highContrast ? HintColor : foreground;
-        control.BackColor = control is Button or ComboBox
+        control.BackColor = control is ButtonBase or ComboBox
           ? (highContrast ? SystemColors.Control : ControlBg)
           : background;
-        if (control is Button button)
+        if (control is ButtonBase button)
           button.FlatAppearance.BorderColor = highContrast ? SystemColors.ControlText
             : darkTheme ? Color.FromArgb(105, 105, 115) : Color.FromArgb(155, 155, 165);
-        if (control is DistortionPlugins.GlyphButton { IsSelected: true })
+        if (control is DistortionPlugins.GlyphButton { IsSelected: true } or
+            DistortionPlugins.GlyphToggle { IsSelected: true })
         {
           control.BackColor = DistortionPlugins.DialogUi.SelectedModeColor;
           control.ForeColor = highContrast ? SystemColors.HighlightText : Color.White;
-          ((Button)control).FlatAppearance.BorderColor = control.ForeColor;
+          if (control is ButtonBase selected)
+            selected.FlatAppearance.BorderColor = control.ForeColor;
         }
         Apply(control);
       }

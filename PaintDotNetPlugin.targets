@@ -1,5 +1,13 @@
 <Project>
   <ItemGroup>
+    <Reference Include="UIAutomationProvider">
+      <HintPath>$(PdnRoot)\UIAutomationProvider.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UIAutomationTypes">
+      <HintPath>$(PdnRoot)\UIAutomationTypes.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Compile Include="$(MSBuildThisFileDirectory)EffectMenuIcons.cs" Link="EffectMenuIcons.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)DialogUi.cs" Link="DialogUi.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)EffectSupportInfo.cs" Link="EffectSupportInfo.cs" />

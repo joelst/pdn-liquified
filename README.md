@@ -92,7 +92,8 @@ Liquified's top-bar Mesh, Mask, and
 Backdrop icons explain their preview-only behavior through tooltips and accessible
 descriptions; hiding the mask does not remove freeze protection.
 The Mesh, Mask, Backdrop, and Pen Pressure icon toggles expose native checked
-states and UI Automation toggle actions, including state-change notifications.
+states and UI Automation toggle actions. A dedicated provider reports exact
+toggle-state property changes while preserving native checkbox input and MSAA support.
 Forward Warp is a **pull/drag** deformation, not a color-blending smudge brush.
 
 Liquified keyboard controls: `[`/`]` or keypad minus/plus changes brush size; arrows

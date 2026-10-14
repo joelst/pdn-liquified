@@ -156,6 +156,15 @@ internal static class Program
                         {
                             tokenType.GetProperty(property)!.SetValue(token, enabled);
                             sync.Invoke(form, new[] { token });
+                            foreach (bool dark in new[] { false, true })
+                            {
+                                formType.GetMethod("ApplyPalette", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new object[] { dark });
+                                System.Drawing.Color selectedColor = (System.Drawing.Color)types.Single(type => type.Name == "DialogUi").GetProperty("SelectedModeColor", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+                                if ((toggle.BackColor == selectedColor) != enabled ||
+                                    (enabled && (toggle.ForeColor != (SystemInformation.HighContrast ? System.Drawing.SystemColors.HighlightText : System.Drawing.Color.White) ||
+                                        toggle.FlatAppearance.BorderColor != toggle.ForeColor)))
+                                    throw new InvalidOperationException("Liquified toggle selected palette is inconsistent: " + field);
+                            }
                             if (!Descendants(toolbar).Contains(toggle) || toggle.Text.Length != 0 ||
                                 (bool)selected.GetValue(toggle)! != enabled ||
                                 toggle.AccessibleName != (enabled ? onAction : offAction) ||
@@ -191,22 +200,24 @@ internal static class Program
                                     accessibleToggle.DoDefaultAction();
                                 else
                                     typeof(CheckBox).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(toggle, new object[] { EventArgs.Empty });
+                                if (accessibilityChanges is not null)
+                                {
+                                    long notificationDeadline = Environment.TickCount64 + 1000;
+                                    do
+                                    {
+                                        Application.DoEvents();
+                                        if (accessibilityChanges.Count > 0 && stateChanges > 0) break;
+                                        Thread.Sleep(10);
+                                    } while (Environment.TickCount64 < notificationDeadline);
+                                }
                             }
                             finally
                             {
                                 toggle.CheckedChanged -= checkedChanged;
                             }
-                            if (accessibilityChanges is not null)
-                            {
-                                long notificationDeadline = Environment.TickCount64 + 1000;
-                                do
-                                {
-                                    Application.DoEvents();
-                                    if (accessibilityChanges.Count > 0) break;
-                                    Thread.Sleep(10);
-                                } while (Environment.TickCount64 < notificationDeadline);
-                            }
-                            if (accessibilityChanges?.Count == 0 || stateChanges != 1 ||
+                            if (accessibilityChanges is not null &&
+                                (accessibilityChanges.Count == 0 || accessibilityChanges.LastState != (enabled ? 0 : 1)) ||
+                                stateChanges != 1 ||
                                 toggle.AccessibilityObject.State.HasFlag(AccessibleStates.Checked) == enabled ||
                                 Convert.ToInt32(toggleState.GetValue(accessibleToggle)) != (enabled ? 0 : 1))
                                 throw new InvalidOperationException($"Liquified accessible toggle action failed: {field}, {activation}, initial={enabled}, checkedChanges={stateChanges}, accessibilityEvents={accessibilityChanges?.Count}, checked={toggle.Checked}.");
@@ -1080,18 +1091,24 @@ internal static class Program
         private readonly System.Windows.Automation.AutomationPropertyChangedEventHandler _callback;
         private System.Windows.Automation.AutomationElement? _element;
         private int _count;
+        private int _lastState = -1;
         public int Count => Volatile.Read(ref _count);
+        public int LastState => Volatile.Read(ref _lastState);
 
         public AccessibilityStateChanges(IntPtr window)
         {
-            _callback = (_, _) => Interlocked.Increment(ref _count);
+            _callback = (_, args) =>
+            {
+                if (args.Property != System.Windows.Automation.TogglePattern.ToggleStateProperty) return;
+                Volatile.Write(ref _lastState, Convert.ToInt32(args.NewValue));
+                Interlocked.Increment(ref _count);
+            };
             RunClientAction(() =>
             {
                 _element = System.Windows.Automation.AutomationElement.FromHandle(window);
                 System.Windows.Automation.Automation.AddAutomationPropertyChangedEventHandler(
                     _element, System.Windows.Automation.TreeScope.Element, _callback,
-                    System.Windows.Automation.TogglePattern.ToggleStateProperty,
-                    System.Windows.Automation.AutomationElement.NameProperty);
+                    System.Windows.Automation.TogglePattern.ToggleStateProperty);
             });
         }
 

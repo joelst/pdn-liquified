@@ -3,6 +3,8 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Windows.Forms;
+using System.Windows.Automation;
+using System.Windows.Automation.Provider;
 
 namespace DistortionPlugins;
 
@@ -126,16 +128,82 @@ internal sealed class GlyphButton : Button
 
 internal sealed class GlyphToggle : CheckBox
 {
+    private ToggleProvider? _automationProvider;
+    private ToggleProvider AutomationProvider => _automationProvider ??= new(this);
+
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal UiGlyph Glyph { get; set; }
 
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal bool IsSelected { get => Checked; set => Checked = value; }
 
+    protected override void WndProc(ref Message m)
+    {
+        // Keep native MSAA support, but use our provider for exact UIA toggle-state events.
+        if (m.Msg == 0x003D && m.LParam == (IntPtr)AutomationInteropProvider.RootObjectId)
+        {
+            m.Result = AutomationInteropProvider.ReturnRawElementProvider(
+                Handle, m.WParam, m.LParam, AutomationProvider);
+            return;
+        }
+        base.WndProc(ref m);
+    }
+
+    protected override void OnCheckedChanged(EventArgs e)
+    {
+        bool current = Checked;
+        base.OnCheckedChanged(e);
+        if (IsHandleCreated && AutomationInteropProvider.ClientsAreListening)
+            AutomationInteropProvider.RaiseAutomationPropertyChangedEvent(
+                AutomationProvider,
+                new AutomationPropertyChangedEventArgs(TogglePatternIdentifiers.ToggleStateProperty,
+                    current ? ToggleState.Off : ToggleState.On,
+                    current ? ToggleState.On : ToggleState.Off));
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
         GlyphButton.DrawGlyph(this, Glyph, e);
+    }
+
+    private sealed class ToggleProvider(GlyphToggle owner) : IRawElementProviderSimple, IToggleProvider
+    {
+        ProviderOptions IRawElementProviderSimple.ProviderOptions => ProviderOptions.ServerSideProvider;
+        IRawElementProviderSimple IRawElementProviderSimple.HostRawElementProvider =>
+            AutomationInteropProvider.HostProviderFromHandle(owner.Handle);
+
+        object? IRawElementProviderSimple.GetPatternProvider(int patternId) =>
+            patternId == TogglePatternIdentifiers.Pattern.Id ? this : null;
+
+        object? IRawElementProviderSimple.GetPropertyValue(int propertyId)
+        {
+            if (propertyId == AutomationElementIdentifiers.ControlTypeProperty.Id) return ControlType.CheckBox.Id;
+            if (propertyId == AutomationElementIdentifiers.NameProperty.Id) return owner.AccessibleName;
+            if (propertyId == AutomationElementIdentifiers.HasKeyboardFocusProperty.Id) return owner.Focused;
+            if (propertyId == AutomationElementIdentifiers.IsKeyboardFocusableProperty.Id) return owner.TabStop;
+            if (propertyId == AutomationElementIdentifiers.IsEnabledProperty.Id) return owner.Enabled;
+            if (propertyId == AutomationElementIdentifiers.AutomationIdProperty.Id) return owner.Name;
+            if (propertyId == AutomationElementIdentifiers.HelpTextProperty.Id) return owner.AccessibleDescription;
+            return null;
+        }
+
+        ToggleState IToggleProvider.ToggleState => owner.Checked ? ToggleState.On : ToggleState.Off;
+
+        void IToggleProvider.Toggle()
+        {
+            if (owner.IsDisposed) throw new ElementNotAvailableException();
+            if (!owner.Enabled) throw new ElementNotEnabledException();
+            void ToggleOnUiThread()
+            {
+                if (!owner.Enabled) throw new ElementNotEnabledException();
+                owner.Checked = !owner.Checked;
+            }
+            if (owner.InvokeRequired)
+                owner.BeginInvoke((Action)ToggleOnUiThread);
+            else
+                ToggleOnUiThread();
+        }
     }
 }
 
