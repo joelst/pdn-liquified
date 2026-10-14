@@ -200,7 +200,7 @@ internal sealed class GlyphToggle : CheckBox
                 owner.Checked = !owner.Checked;
             }
             if (owner.InvokeRequired)
-                owner.BeginInvoke((Action)ToggleOnUiThread);
+                owner.Invoke((Action)ToggleOnUiThread);
             else
                 ToggleOnUiThread();
         }
