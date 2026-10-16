@@ -1,3 +1,4 @@
+using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
@@ -7,9 +8,10 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        if (args.Length != 1)
+        bool accessibilityOnly = args.Length == 2 && args[1] == "--accessibility";
+        if (args.Length != 1 && !accessibilityOnly)
         {
-            Console.Error.WriteLine("Usage: PluginCompatibility <plugin-directory>");
+            Console.Error.WriteLine("Usage: PluginCompatibility <plugin-directory> [--accessibility]");
             return 2;
         }
 
@@ -24,7 +26,14 @@ internal static class Program
         {
             foreach (string name in new[] { "LiquifiedPlugin", "GridWarpPlugin", "DocumentRectifyPlugin" })
             {
-                Assembly plugin = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(directory, name + ".dll"));
+                string pluginPath = Path.Combine(directory, name + ".dll");
+                Assembly host = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(AppContext.BaseDirectory, "paintdotnet.dll"));
+                Type loaderType = host.GetType("PaintDotNet.Effects.DefaultEffectPluginLoader", throwOnError: true)!;
+                using IDisposable loader = (IDisposable)Activator.CreateInstance(loaderType, nonPublic: true)!;
+                object context = loaderType.GetMethod("CreateAssemblyLoadContext")!.Invoke(loader, new object[] { pluginPath })!;
+                Assembly plugin = (Assembly)loaderType.GetMethod("Load")!.Invoke(loader, new[] { context, pluginPath })!;
+                if (plugin.GetReferencedAssemblies().Any(reference => reference.Name is "ComputeSharp.Core" or "ComputeSharp.D2D1"))
+                    throw new InvalidOperationException(name + " is not self-contained; build the trimmed/merged plugin output before installing.");
                 Type[] types = plugin.GetTypes();
                 Type tokenType = types.Single(type => type.Name.EndsWith("ConfigToken", StringComparison.Ordinal));
                 object token = Activator.CreateInstance(tokenType)!;
@@ -45,6 +54,13 @@ internal static class Program
                     throw new InvalidOperationException(name + " did not clone its token.");
                 }
                 Type effectType = types.Single(type => type.Name is "LiquifiedEffect" or "GridWarpEffect" or "DocumentRectifyEffect");
+                MethodInfo registration = effectType.GetMethod("GetSampleMapRegistrationBlob", BindingFlags.Static | BindingFlags.NonPublic)
+                    ?? throw new InvalidOperationException(name + " has no shader registration check.");
+                object[] registrationArguments = { Guid.Empty };
+                object blob = registration.Invoke(null, registrationArguments)!;
+                if ((Guid)registrationArguments[0] == Guid.Empty ||
+                    blob is not ReadOnlyMemory<byte> { Length: > 0 })
+                    throw new InvalidOperationException(name + " failed shader registration.");
                 using IDisposable effect = (IDisposable)Activator.CreateInstance(effectType, nonPublic: true)!;
                 Type formType = types.Single(type => type.Name.EndsWith("ConfigForm", StringComparison.Ordinal));
                 using Form form = (Form)Activator.CreateInstance(formType, nonPublic: true)!;
@@ -56,6 +72,19 @@ internal static class Program
                     Type sharedUi = types.Single(type => type.Name == "DialogUi");
                     MethodInfo drawLock = sharedUi.GetMethod("DrawFreezeGlyph", BindingFlags.Static | BindingFlags.NonPublic)!;
                     MethodInfo createIcon = formType.GetMethod("CreateModeIcon", BindingFlags.Static | BindingFlags.NonPublic)!;
+                    foreach (int iconSize in new[] { 64, 128 })
+                    {
+                        using var pucker = (System.Drawing.Bitmap)createIcon.Invoke(null,
+                            new object[] { Enum.Parse(modeType, "Pucker"), iconSize, System.Drawing.Color.White })!;
+                        using var bloat = (System.Drawing.Bitmap)createIcon.Invoke(null,
+                            new object[] { Enum.Parse(modeType, "Bloat"), iconSize, System.Drawing.Color.White })!;
+                        int scale = iconSize / 64;
+                        if (pucker.GetPixel(40 * scale, 12 * scale).A < 128 ||
+                            bloat.GetPixel(40 * scale, 12 * scale).A > 32 ||
+                            bloat.GetPixel(35 * scale, 16 * scale).A < 128 ||
+                            pucker.GetPixel(35 * scale, 16 * scale).A > 32)
+                            throw new InvalidOperationException("Pucker/Bloat arrowheads do not point inward/outward respectively.");
+                    }
                     foreach (string modeName in new[] { "Freeze", "Unfreeze" })
                     {
                         using var actual = (System.Drawing.Bitmap)createIcon.Invoke(null,
@@ -101,19 +130,183 @@ internal static class Program
                     throw new InvalidOperationException(name + " has inconsistent public branding.");
                 if (name == "LiquifiedPlugin")
                 {
-                    foreach (string field in new[] { "showMeshCheck", "showMaskCheck", "showBackdropCheck" })
-                    {
-                        Control toggle = (Control)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
-                        Control info = toggle.Parent!.Controls.Cast<Control>().Single(control => control.Name == "controlInfo");
-                        if (!info.AccessibleDescription!.Contains("final", StringComparison.OrdinalIgnoreCase) ||
-                            info.AccessibleName != toggle.AccessibleName + " information")
-                            throw new InvalidOperationException("Liquified view toggle lacks adjacent explanatory information: " + field);
-                    }
+                    if ((double)tokenType.GetProperty("ReconstructAmount")!.GetValue(token)! != 0)
+                        throw new InvalidOperationException("Liquified reconstruction should default to zero.");
                     if ((double)tokenType.GetProperty("Strength")!.GetValue(token)! != 0.25 ||
                         (double)tokenType.GetProperty("Density")!.GetValue(token)! != 0.25)
                         throw new InvalidOperationException("Liquified factory pressure/density are not 25%.");
                     MethodInfo sync = formType.GetMethod("SyncUIFromToken", BindingFlags.Instance | BindingFlags.NonPublic)!;
                     sync.Invoke(form, new[] { token });
+                    Control toolbar = Descendants(form).Single(control => control.Name == "commonSettingsBar");
+                    if (!Descendants(toolbar).Contains((Control)formType.GetField("reconstructSlider", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!))
+                        throw new InvalidOperationException("Global reconstruction is not on the top toolbar.");
+                    ToolTip toggleTips = (ToolTip)formType.GetField("uiToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                    foreach (var (field, property, onAction, offAction) in new[]
+                    {
+                        ("showMeshButton", "ShowMesh", "Hide mesh", "Show mesh"),
+                        ("showMaskButton", "ShowMask", "Hide mask", "Show mask"),
+                        ("showBackdropButton", "ShowBackdrop", "Hide backdrop", "Show backdrop"),
+                        ("penPressureButton", "UsePenPressure", "Disable pen pressure", "Enable pen pressure")
+                    })
+                    {
+                        CheckBox toggle = (CheckBox)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                        PropertyInfo selected = toggle.GetType().GetProperty("IsSelected", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                        foreach (bool enabled in new[] { false, true })
+                        foreach (string activation in new[] { "UIAutomation", "DefaultAction", "Click" })
+                        {
+                            tokenType.GetProperty(property)!.SetValue(token, enabled);
+                            sync.Invoke(form, new[] { token });
+                            foreach (bool dark in new[] { false, true })
+                            {
+                                formType.GetMethod("ApplyPalette", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new object[] { dark });
+                                System.Drawing.Color selectedColor = (System.Drawing.Color)types.Single(type => type.Name == "DialogUi").GetProperty("SelectedModeColor", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+                                if ((toggle.BackColor == selectedColor) != enabled ||
+                                    (enabled && (toggle.ForeColor != (SystemInformation.HighContrast ? System.Drawing.SystemColors.HighlightText : System.Drawing.Color.White) ||
+                                        toggle.FlatAppearance.BorderColor != toggle.ForeColor)))
+                                    throw new InvalidOperationException("Liquified toggle selected palette is inconsistent: " + field);
+                            }
+                            if (!Descendants(toolbar).Contains(toggle) || toggle.Text.Length != 0 ||
+                                (bool)selected.GetValue(toggle)! != enabled ||
+                                toggle.AccessibleName != (enabled ? onAction : offAction) ||
+                                !toggle.AccessibleDescription!.StartsWith(toggle.AccessibleName + ".", StringComparison.Ordinal) ||
+                                toggleTips.GetToolTip(toggle) != toggle.AccessibleDescription ||
+                                !toggle.AccessibleDescription.Contains(enabled ? "Currently on." : "Currently off.", StringComparison.Ordinal))
+                                throw new InvalidOperationException("Liquified toolbar toggle state or guidance is inconsistent: " + field);
+                            _ = toggle.Handle;
+                            AccessibleObject accessibleToggle = toggle.AccessibilityObject;
+                            MethodInfo supportsPattern = accessibleToggle.GetType().GetMethod("IsPatternSupported", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                            object togglePattern = Enum.ToObject(supportsPattern.GetParameters()[0].ParameterType, 10015);
+                            PropertyInfo toggleState = accessibleToggle.GetType().GetProperty("ToggleState", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                            if (!(bool)supportsPattern.Invoke(accessibleToggle, new[] { togglePattern })! ||
+                                Convert.ToInt32(toggleState.GetValue(accessibleToggle)) != (enabled ? 1 : 0) ||
+                                toggle.AccessibilityObject.Role != AccessibleRole.CheckButton ||
+                                toggle.AccessibilityObject.State.HasFlag(AccessibleStates.Checked) != enabled ||
+                                toggle.Appearance != Appearance.Button)
+                                throw new InvalidOperationException("Liquified icon toggle does not expose native checked accessibility state: " + field);
+                            int stateChanges = 0;
+                            using var accessibilityChanges = accessibilityOnly ? new AccessibilityStateChanges(toggle.Handle) : null;
+                            EventHandler checkedChanged = (_, _) => stateChanges++;
+                            toggle.CheckedChanged += checkedChanged;
+                            try
+                            {
+                                if (activation == "UIAutomation")
+                                {
+                                    if (accessibilityChanges is not null)
+                                        accessibilityChanges.Toggle();
+                                    else
+                                        accessibleToggle.GetType().GetMethod("Toggle", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(accessibleToggle, null);
+                                }
+                                else if (activation == "DefaultAction")
+                                    accessibleToggle.DoDefaultAction();
+                                else
+                                    typeof(CheckBox).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(toggle, new object[] { EventArgs.Empty });
+                                if (accessibilityChanges is not null)
+                                {
+                                    long notificationDeadline = Environment.TickCount64 + 1000;
+                                    do
+                                    {
+                                        Application.DoEvents();
+                                        if (accessibilityChanges.Count > 0 && stateChanges > 0) break;
+                                        Thread.Sleep(10);
+                                    } while (Environment.TickCount64 < notificationDeadline);
+                                }
+                            }
+                            finally
+                            {
+                                toggle.CheckedChanged -= checkedChanged;
+                            }
+                            if (accessibilityChanges is not null &&
+                                (accessibilityChanges.Count == 0 || accessibilityChanges.LastState != (enabled ? 0 : 1)) ||
+                                stateChanges != 1 ||
+                                toggle.AccessibilityObject.State.HasFlag(AccessibleStates.Checked) == enabled ||
+                                Convert.ToInt32(toggleState.GetValue(accessibleToggle)) != (enabled ? 0 : 1))
+                                throw new InvalidOperationException($"Liquified accessible toggle action failed: {field}, {activation}, initial={enabled}, checkedChanges={stateChanges}, accessibilityEvents={accessibilityChanges?.Count}, checked={toggle.Checked}.");
+                            object toggledToken = Activator.CreateInstance(tokenType)!;
+                            formType.GetMethod("OnUpdateTokenFromDialog", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new[] { toggledToken });
+                            if ((bool)tokenType.GetProperty(property)!.GetValue(toggledToken)! == enabled ||
+                                (bool)selected.GetValue(toggle)! == enabled)
+                                throw new InvalidOperationException("Liquified toolbar toggle did not update its token: " + field);
+                            if (property == "ShowMesh")
+                            {
+                                Control meshSize = (Control)formType.GetField("meshSizeSlider", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                                Control group = meshSize.Parent!;
+                                Control parent = group.Parent!;
+                                int index = parent.Controls.GetChildIndex(group);
+                                using var visibleParent = new Panel();
+                                try
+                                {
+                                    visibleParent.Controls.Add(group);
+                                    if (group.Visible == enabled)
+                                        throw new InvalidOperationException("Mesh size visibility does not follow the mesh toggle.");
+                                }
+                                finally
+                                {
+                                    parent.Controls.Add(group);
+                                    parent.Controls.SetChildIndex(group, index);
+                                }
+                            }
+                        }
+                    }
+                    if (accessibilityOnly)
+                    {
+                        Console.WriteLine("PASS Liquified native toggle states, UI Automation notifications, accessible actions, click actions, and token synchronization.");
+                        return 0;
+                    }
+                    tokenType.GetProperty("ShowMask")!.SetValue(token, false);
+                    tokenType.GetProperty("ShowBackdrop")!.SetValue(token, true);
+                    tokenType.GetProperty("UsePenPressure")!.SetValue(token, false);
+                    sync.Invoke(form, new[] { token });
+                    FieldInfo penSourceField = formType.GetField("origSurface", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                    using (IDisposable source = (IDisposable)Activator.CreateInstance(penSourceField.FieldType, new object[] { 64, 64 })!)
+                    {
+                        penSourceField.SetValue(form, source);
+                        formType.GetField("initialFitDone", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, true);
+                        formType.GetField("zoom", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, 1f);
+                        formType.GetField("pan", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, System.Drawing.PointF.Empty);
+                        MethodInfo penInput = formType.GetMethod("HandlePenPointer", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                        try
+                        {
+                            foreach (var (enabled, reportsPressure, expectedStart, expectedMove) in new[]
+                            {
+                                (true, true, 0.25f, 0.75f),
+                                (false, true, 1f, 1f),
+                                (true, false, 1f, 1f)
+                            })
+                            {
+                                tokenType.GetProperty("UsePenPressure")!.SetValue(token, enabled);
+                                tokenType.GetProperty("Mode")!.SetValue(token, Enum.ToObject(tokenType.GetProperty("Mode")!.PropertyType, 2));
+                                sync.Invoke(form, new[] { token });
+                                penInput.Invoke(form, new object[] { new System.Drawing.Point(10, 10), 0.25f, 0, reportsPressure });
+                                penInput.Invoke(form, new object[] { new System.Drawing.Point(15, 10), 0.75f, 1, reportsPressure });
+                                formType.GetMethod("ApplyRateTick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
+                                penInput.Invoke(form, new object[] { new System.Drawing.Point(15, 10), 0.75f, 2, reportsPressure });
+                                System.Collections.IList history = (System.Collections.IList)formType.GetField("strokes", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                                object stroke = history[history.Count - 1]!;
+                                System.Collections.IList points = (System.Collections.IList)stroke.GetType().GetProperty("Points")!.GetValue(stroke)!;
+                                if (points.Count != 3 || ((float[])points[0]!)[2] != expectedStart ||
+                                    ((float[])points[1]!)[2] != expectedMove || ((float[])points[2]!)[2] != expectedMove ||
+                                    (bool)formType.GetField("pointerCaptureActive", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)! ||
+                                    ((System.Windows.Forms.Timer)formType.GetField("rateTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!).Enabled)
+                                    throw new InvalidOperationException("Liquified pen pressure or full-intensity fallback failed.");
+                            }
+                            MethodInfo mouseDown = formType.GetMethod("Canvas_MouseDown", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                            Control penCanvas = (Control)formType.GetField("canvas", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                            mouseDown.Invoke(form, new object[] { penCanvas, new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0) });
+                            object activeStroke = formType.GetField("currentStroke", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                            System.Collections.IList mousePoints = (System.Collections.IList)activeStroke.GetType().GetProperty("Points")!.GetValue(activeStroke)!;
+                            if (((float[])mousePoints[0]!)[2] != 1f ||
+                                (float)formType.GetField("lastPointerPressure", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)! != 1f)
+                                throw new InvalidOperationException("Mouse input retained pressure from the previous pen stroke.");
+                            formType.GetMethod("Canvas_MouseUp", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form,
+                                new object[] { penCanvas, new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0) });
+                        }
+                        finally
+                        {
+                            penSourceField.SetValue(form, null);
+                            formType.GetMethod("ResetStrokes", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
+                            ((System.Windows.Forms.Timer)formType.GetField("previewTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!).Stop();
+                        }
+                    }
                     foreach (string field in new[] { "strengthSlider", "densitySlider" })
                     {
                         TrackBar slider = (TrackBar)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
@@ -133,7 +326,7 @@ internal static class Program
                     tokenType.GetProperty("Mode")!.SetValue(token, Enum.ToObject(tokenType.GetProperty("Mode")!.PropertyType, 2));
                     object roundTrip = Activator.CreateInstance(tokenType)!;
                     formType.GetMethod("OnUpdateTokenFromDialog", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, new[] { roundTrip });
-                    foreach (string property in new[] { "Strength", "Density", "MeshSize", "ShowMesh", "SidebarCollapsed", "Mode" })
+                    foreach (string property in new[] { "Strength", "Density", "MeshSize", "ShowMesh", "ShowMask", "ShowBackdrop", "UsePenPressure", "SidebarCollapsed", "Mode" })
                     {
                         PropertyInfo setting = tokenType.GetProperty(property)!;
                         if (!Equals(setting.GetValue(token), setting.GetValue(roundTrip)) ||
@@ -157,7 +350,7 @@ internal static class Program
                         tokenType.GetProperty("ReconstructAmount")!.SetValue(token, 0.8);
                         preferences.GetMethod("Save", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new[] { token, settingsPath });
                         object restored = preferences.GetMethod("Load", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { settingsPath })!;
-                        foreach (string property in new[] { "Strength", "Density", "MeshSize", "ShowMesh", "SidebarCollapsed", "Mode" })
+                        foreach (string property in new[] { "Strength", "Density", "MeshSize", "ShowMesh", "ShowMask", "ShowBackdrop", "UsePenPressure", "SidebarCollapsed", "Mode" })
                         {
                             PropertyInfo setting = tokenType.GetProperty(property)!;
                             if (!Equals(setting.GetValue(token), setting.GetValue(restored)))
@@ -197,7 +390,7 @@ internal static class Program
                     }
                     finally { File.Delete(settingsPath); }
                     var rail = (FlowLayoutPanel)formType.GetField("modeButtonsPanel", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
-                    if (rail.Name != "modeRail" || rail.Parent != form || rail.Controls.Count != 10 || !rail.AutoScroll)
+                    if (rail.Name != "modeRail" || rail.Parent != form || rail.Controls.OfType<Button>().Count() != 10 || !rail.AutoScroll)
                         throw new InvalidOperationException("Liquified mode icons are not in the persistent scrollable rail.");
                     MethodInfo shortcut = formType.GetMethod("ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic)!;
                     for (int i = 0; i < 10; i++)
@@ -210,7 +403,7 @@ internal static class Program
                             throw new InvalidOperationException("Liquified mode shortcut or accessible hint is incorrect.");
                     }
                     foreach (Button action in Descendants(form).OfType<Button>().Where(button =>
-                        button.AccessibleName is "Mask None" or "Mask All" or "Invert Mask" or "Reconstruct All" or "Restore All" or "Undo" or "Redo"))
+                        button.AccessibleName is "Mask None" or "Mask All" or "Invert Mask" or "Remove Deformation" or "Undo" or "Redo"))
                     {
                         ToolTip tips = (ToolTip)formType.GetField("uiToolTip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
                         if (action.Image is null || string.IsNullOrWhiteSpace(tips.GetToolTip(action)) ||
@@ -674,7 +867,7 @@ internal static class Program
                             collapseTips.GetToolTip(collapse) != collapse.AccessibleDescription ||
                             suiteCanvas.Width < 100 || suiteCanvas.Height < 100 ||
                             suiteCanvas.Bottom > suiteActions.Top)
-                            throw new InvalidOperationException(name + " settings could not expand or overlap the canvas.");
+                            throw new InvalidOperationException($"{name} settings could not expand or overlap the canvas: size={size}, canvas={suiteCanvas.Bounds}, actions={suiteActions.Bounds}, dpi={form.DeviceDpi}.");
                         if (name == "GridWarpPlugin")
                         {
                             MethodInfo setMode = formType.GetMethod("SetEditMode", BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -723,6 +916,37 @@ internal static class Program
                                 sidebarTips.GetToolTip(sidebar) != sidebar.AccessibleDescription)
                                 throw new InvalidOperationException("Liquified sidebar accessibility and tooltip disagree with the current action.");
                             form.PerformLayout();
+                            foreach (string field in new[] { "qualitySlider", "meshSizeSlider", "showMeshButton" })
+                            {
+                                Control control = (Control)formType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                                if (!Descendants(top).Contains(control))
+                                    throw new InvalidOperationException("Liquified quality/mesh controls are not on the top bar.");
+                            }
+                            if (Descendants(form).OfType<Button>().Any(button => button.AccessibleName == "Reconstruct All"))
+                                throw new InvalidOperationException("Liquified retains the removed 100% reconstruction button.");
+                            Button restore = Descendants(form).OfType<Button>().Single(button => button.AccessibleName == "Remove Deformation");
+                            Control settings = (Control)formType.GetField("leftPanel", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                            Control rail = (Control)formType.GetField("modeButtonsPanel", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                            Control actionParent = collapsed ? rail : settings;
+                            foreach (string action in new[] { "Mask None", "Mask All", "Invert Mask", "Remove Deformation", "Save Defaults" })
+                            {
+                                Button button = Descendants(form).OfType<Button>().Single(button => button.AccessibleName == action);
+                                if (!Descendants(actionParent).Contains(button) || button.Text.Length != 0)
+                                    throw new InvalidOperationException("Liquified editing actions did not relocate to the visible left bar.");
+                            }
+                            if (!collapsed)
+                            {
+                                TrackBar amount = (TrackBar)formType.GetField("reconstructSlider", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+                                amount.Value = 60;
+                                typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(restore, new object[] { EventArgs.Empty });
+                                if (amount.Value != 0)
+                                    throw new InvalidOperationException("Remove Deformation did not reset reconstruction.");
+                                formType.GetMethod("Undo", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
+                                if (amount.Value != 60)
+                                    throw new InvalidOperationException("Remove Deformation could not be undone.");
+                                formType.GetMethod("Undo", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
+                                ((System.Windows.Forms.Timer)formType.GetField("previewTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!).Stop();
+                            }
                             if (canvas.Height < 100 || canvas.Width < 100 || canvas.Top < top.Bottom ||
                                 canvas.Bottom > bottom.Top || bottom.Bottom > form.ClientSize.Height)
                                 throw new InvalidOperationException("Liquified bars overlap or leave no usable canvas at " + size + ".");
@@ -730,6 +954,14 @@ internal static class Program
                             {
                                 if (group.Right > top.ClientSize.Width || group.Bottom > top.ClientSize.Height)
                                     throw new InvalidOperationException("Liquified top-bar controls are clipped at " + size + ".");
+                                foreach (Panel header in group.Controls.OfType<Panel>().Where(header => header.Controls.OfType<Label>().Count() == 2))
+                                {
+                                    Control[] children = header.Controls.Cast<Control>().ToArray();
+                                    if (children.Any(child => child.Right > header.ClientSize.Width) ||
+                                        children.SelectMany((child, index) => children.Skip(index + 1).Select(other => (child, other)))
+                                            .Any(pair => pair.child.Bounds.IntersectsWith(pair.other.Bounds)))
+                                        throw new InvalidOperationException("Liquified compact slider caption/value/info controls overlap.");
+                                }
                             }
                         }
                         var row = Descendants(bottom).Single(control => control.Name == "footerButtons");
@@ -852,6 +1084,57 @@ internal static class Program
     {
         public int DisposeCount { get; private set; }
         public void Dispose() => DisposeCount++;
+    }
+
+    private sealed class AccessibilityStateChanges : IDisposable
+    {
+        private readonly System.Windows.Automation.AutomationPropertyChangedEventHandler _callback;
+        private System.Windows.Automation.AutomationElement? _element;
+        private int _count;
+        private int _lastState = -1;
+        public int Count => Volatile.Read(ref _count);
+        public int LastState => Volatile.Read(ref _lastState);
+
+        public AccessibilityStateChanges(IntPtr window)
+        {
+            _callback = (_, args) =>
+            {
+                if (args.Property != System.Windows.Automation.TogglePattern.ToggleStateProperty) return;
+                Volatile.Write(ref _lastState, Convert.ToInt32(args.NewValue));
+                Interlocked.Increment(ref _count);
+            };
+            RunClientAction(() =>
+            {
+                _element = System.Windows.Automation.AutomationElement.FromHandle(window);
+                System.Windows.Automation.Automation.AddAutomationPropertyChangedEventHandler(
+                    _element, System.Windows.Automation.TreeScope.Element, _callback,
+                    System.Windows.Automation.TogglePattern.ToggleStateProperty);
+            });
+        }
+
+        public void Dispose()
+        {
+            RunClientAction(() => System.Windows.Automation.Automation.RemoveAutomationPropertyChangedEventHandler(_element!, _callback));
+        }
+
+        public void Toggle() => RunClientAction(() =>
+            ((System.Windows.Automation.TogglePattern)_element!.GetCurrentPattern(
+                System.Windows.Automation.TogglePattern.Pattern)).Toggle());
+
+        private static void RunClientAction(Action action)
+        {
+            // An in-process UIA client must run off the UI thread while it pumps provider requests.
+            Task task = Task.Run(action);
+            long deadline = Environment.TickCount64 + 10000;
+            while (!task.IsCompleted)
+            {
+                if (Environment.TickCount64 >= deadline)
+                    throw new TimeoutException("UI Automation client did not respond.");
+                Application.DoEvents();
+                Thread.Sleep(10);
+            }
+            task.GetAwaiter().GetResult();
+        }
     }
 
     private static IEnumerable<Control> Descendants(Control parent)

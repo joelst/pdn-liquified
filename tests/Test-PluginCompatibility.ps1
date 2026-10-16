@@ -51,6 +51,11 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Plugin compatibility checks failed (exit $($LASTEXITCODE))."
     }
+    # UIA initializes native accessibility services; isolate it from hidden-form layout checks.
+    & (Join-Path $portable 'PluginCompatibility.exe') $plugins '--accessibility'
+    if ($LASTEXITCODE -ne 0) {
+        throw "Plugin accessibility checks failed (exit $($LASTEXITCODE))."
+    }
 }
 finally {
     foreach ($path in $ownedPaths) {

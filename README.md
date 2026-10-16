@@ -31,18 +31,24 @@ Paint.NET supplies the installed DLL location.
 - **Zoom and pan** -- mouse-wheel zoom with 10%--800% limits, right-click pan,
   double-click fit-to-window (automatic fit can fall outside the wheel limits)
 - **Adjustable parameters** -- Brush Size, Pressure/Strength, Density, stationary Rate, Quality, optional Windows pen pressure
-- **Reconstruction and masks** -- global reconstruction amount, local Reconstruct brush, Restore All, Mask None/All/Invert, and independent mask visibility
+- **Reconstruction and masks** -- global reconstruction amount, local Reconstruct brush, Remove Deformation, Mask None/All/Invert, and independent mask visibility
 - **View options** -- deformation mesh with adjustable spacing, document-composition backdrop, selection-aware preview, and processing status
-- **Undo / Redo** with `Ctrl+Z` / `Ctrl+Y`; Restore All removes deformation
+- **Undo / Redo** with `Ctrl+Z` / `Ctrl+Y`; Remove Deformation removes deformation
   while preserving the mask
-- **Common-settings bar** -- brush size, pressure, density, and rate stay above
-  the canvas; a collapse/expand chevron toggles the advanced left panel. Undo, redo,
-  restore, OK, and Cancel remain available when the panel is hidden.
+- **Common-settings bar** -- brush size, pressure, density, rate, reconstruction, quality, and mesh
+  size stay above the canvas, alongside Show Mesh, Show Mask, Show Backdrop, and
+  Use Pen Pressure icon toggles.
+  Filled icons indicate enabled options; hover for current-action guidance.
+  Mesh Size is hidden when the mesh is hidden. Mask actions, Remove Deformation,
+  and the Save Defaults disk icon move from left settings to the scrollable mode
+  rail when settings are collapsed. A collapse/expand
+  chevron toggles the advanced left panel without hiding these controls, Undo,
+  Redo, OK, or Cancel. The global reconstruction amount remains on the top bar.
 - **Persistent mode rail** -- the ten larger brush icons remain on the left when
   settings are hidden. `Alt+1` through `Alt+9` select Forward Warp through Freeze;
   `Alt+0` selects Unfreeze. Tooltips and accessible descriptions list each hotkey.
 - **Theme-aware controls** -- follows Paint.NET light/dark theme changes and Windows
-  high-contrast colors. Mask None/All/Invert, Reconstruct All, Restore, Undo, and
+  high-contrast colors. Mask None/All/Invert, Remove Deformation, Undo, and
   Redo use drawn icons with descriptive tooltips. Footer buttons share a common
   height, with processing status on a separate row.
 - **Gentler starting brush** -- pressure and density default to 25%.
@@ -56,6 +62,11 @@ range is 5%--100%, density is 0%--100%, and Rate is 1--120 applications per seco
 Stationary Rate does not apply Forward Warp because that mode needs movement.
 Quality ranges from 1 to 4, generating 1 to 16 GPU samples per output pixel;
 it does not increase CPU preview sampling.
+
+Global Reconstruct Amount defaults to **0%**, preserving the deformation you paint.
+Increasing it blends the whole deformation back toward the original; 100% shows
+the original. It is not the strength of the local Reconstruct brush. Reconstruction
+is excluded from saved defaults and last-used preferences.
 
 Liquified automatically saves last-used brush/display preferences when you click
 OK to `%LOCALAPPDATA%\pdn-liquified\liquified-last-used.json`. Cancel does not change
@@ -76,17 +87,26 @@ Liquified and Grid Warpified use the same closed-lock/open-lock Freeze/Unfreeze
 glyphs, blue frozen-state color, and selected-mode palette. High-contrast mode
 uses Windows system colors instead.
 Hover an info icon for a description or click it to open a readable explanation.
-Settings can be collapsed without losing access to OK/Cancel or editing actions.
-Liquified's Show Mesh, Show Mask, and Show Backdrop toggles each have an adjacent
-info icon describing their preview-only behavior; hiding the mask does not remove
-freeze protection.
+Settings can be collapsed without losing access to OK/Cancel, Undo/Redo, or brush modes.
+Liquified's top-bar Mesh, Mask, and
+Backdrop icons explain their preview-only behavior through tooltips and accessible
+descriptions; hiding the mask does not remove freeze protection.
+The Mesh, Mask, Backdrop, and Pen Pressure icon toggles expose native checked
+states and UI Automation toggle actions. A dedicated provider reports exact
+toggle-state property changes while preserving native checkbox input and MSAA support.
 Forward Warp is a **pull/drag** deformation, not a color-blending smudge brush.
 
 Liquified keyboard controls: `[`/`]` or keypad minus/plus changes brush size; arrows
 move and apply the keyboard brush (Shift uses a larger step); Ctrl+arrows pans.
 `Ctrl+0` resets zoom/pan, and `Ctrl+Z`/`Ctrl+Y` undo/redo. Focused sliders keep their
-native arrow-key behavior. Pen pressure requires a driver reporting Windows pointer
-pressure; otherwise brush intensity uses full pressure.
+native arrow-key behavior. Pen pressure uses a separate Windows `WM_POINTER` /
+`GetPointerPenInfo` input path on the plugin's own canvas, not Paint.NET's internal
+pen system (which is not exposed through the public plugin API). A compatible
+Windows pen driver must report pressure; mouse input and unsupported drivers use
+full intensity. The top-bar pen icon enables pressure scaling, not hardware
+detection: the status shows a live **Pen: percentage** during a pressure-reporting
+stroke, or the full-intensity fallback. This path has not been verified with a
+physical pen; enabling the option alone does not prove device compatibility.
 
 CPU preview uses bilinear image sampling; final Quality controls GPU RGSS multisampling.
 Both use the same full-resolution inverse displacement map, with no stroke-count cap
@@ -105,7 +125,7 @@ if their total area remains within the budget and each dimension meets the limit
 An 8K UHD image (7680 x 4320) exceeds the current budget; merely raising the cap
 would increase the estimated working buffers to roughly 4 GiB before host overhead.
 
-Mask-wide actions and Restore All participate in undo/redo; Restore All removes
+Mask-wide actions and Remove Deformation participate in undo/redo; Remove Deformation removes
 deformation while retaining protection. Liquified retains **256 undo steps**, using shared
 stroke history rather than full-image snapshots. The mesh solves the inverse sampling
 field for forward vertex locations so it follows visible content. Segments that cannot
@@ -207,7 +227,7 @@ as new edits are recorded.
 ## Build
 
 ```powershell
-dotnet build LiquifiedPlugins.slnx                 # Debug
+dotnet build LiquifiedPlugins.slnx                 # Debug (self-contained merged DLLs)
 dotnet build -c Release LiquifiedPlugins.slnx      # Release (IL trim + ILRepack merge; no deployment)
 ```
 
@@ -217,10 +237,16 @@ Do not use development-main assemblies requiring .NET 11 to build these .NET 9 p
 Paint.NET 5.1.12 is the documented baseline, not a guarantee that every future
 stable/beta host works. Check the intended host versions before publishing.
 
-Release builds automatically:
+Debug and Release builds automatically:
 
 1. Trim unused ComputeSharp dependency IL via `Microsoft.NET.ILLink`
 2. Merge ComputeSharp assemblies via ILRepack
+
+Always install the final DLLs from `bin\<Configuration>\net9.0-windows`, never
+compiler intermediates from `obj`. Older unmerged Debug builds reference the host's
+ComputeSharp assembly and can fail on Paint.NET 5.2 with a missing `get_EffectFactory`
+shader member. Rebuild and replace all three DLLs with self-contained outputs;
+do not copy ComputeSharp DLLs into Paint.NET's installation to work around it.
 
 Deployment is opt-in: `/p:DeployPlugins=true` copies to the actual Windows Documents
 Effects directory. `/p:PdnEffectsDirOverride="<directory>"` overrides that target.
@@ -236,11 +262,13 @@ dotnet run --project tests\Liquified.RegressionTests -c Release -- --benchmark
 Invoke-Pester -Path .\tests\ReleaseSigning.Tests.ps1
 ```
 
-The compatibility check loads the merged Release plugins using the portable host's own
-runtime, resolves types, JIT-checks effect/dialog/token methods, clones tokens, and
+The compatibility check loads merged plugins using the portable host's own effect
+loader and runtime, rejects external ComputeSharp references, invokes shader
+registration, resolves types, JIT-checks effect/dialog/token methods, clones tokens, and
 constructs/disposes effects and dialogs. It also checks keyboard handlers and guidance,
 bounded Grid Warpified history, malformed aspect modes, and complete/partial effect-array
 cleanup. These are programmatic checks, not end-to-end UI interaction or GPU rendering.
+Use `-Configuration Debug` to check Debug outputs as well.
 Signing tests require Pester 5.7.1; see the signed-release workflow for setup.
 Also load Paint.NET and exercise all three effects (**Effects > Tools >
 Liquified**, **Grid Warpified**, and **Doc Recitified**), including mixed-DPI and pen input.

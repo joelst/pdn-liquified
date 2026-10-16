@@ -24,14 +24,14 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   private FlowLayoutPanel modeButtonsPanel = null!;
   private readonly List<Button> modeButtons = new();
   private readonly Dictionary<Button, ActionGlyph> actionButtons = new();
-  private enum ActionGlyph { Undo, Redo, MaskNone, MaskAll, MaskInvert, Reconstruct, Restore }
+  private enum ActionGlyph { Undo, Redo, MaskNone, MaskAll, MaskInvert, Restore }
   private TrackBar brushSizeSlider = null!, strengthSlider = null!, densitySlider = null!, rateSlider = null!, reconstructSlider = null!, qualitySlider = null!, meshSizeSlider = null!;
   private Label brushSizeValue = null!, strengthValue = null!, densityValue = null!, rateValue = null!, reconstructValue = null!, qualityValue = null!, meshSizeValue = null!, statusLabel = null!;
   private Button undoBtn = null!, redoBtn = null!, resetBtn = null!;
-  private CheckBox showMeshCheck = null!, showMaskCheck = null!, showBackdropCheck = null!;
-  private CheckBox penPressureCheck = null!;
+  private DistortionPlugins.GlyphToggle showMeshButton = null!, showMaskButton = null!, showBackdropButton = null!, penPressureButton = null!;
   private Panel canvas = null!;
   private FlowLayoutPanel leftPanel = null!;
+  private FlowLayoutPanel editingActions = null!;
   private Button sidebarButton = null!;
   private bool sidebarCollapsed;
   private LiquifiedMode selectedMode = LiquifiedMode.ForwardWarp;
@@ -180,12 +180,20 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       foreach (Control control in parent.Controls)
       {
         control.ForeColor = control is Label { Tag: "hint" } && !highContrast ? HintColor : foreground;
-        control.BackColor = control is Button or ComboBox
+        control.BackColor = control is ButtonBase or ComboBox
           ? (highContrast ? SystemColors.Control : ControlBg)
           : background;
-        if (control is Button button)
+        if (control is ButtonBase button)
           button.FlatAppearance.BorderColor = highContrast ? SystemColors.ControlText
             : darkTheme ? Color.FromArgb(105, 105, 115) : Color.FromArgb(155, 155, 165);
+        if (control is DistortionPlugins.GlyphButton { IsSelected: true } or
+            DistortionPlugins.GlyphToggle { IsSelected: true })
+        {
+          control.BackColor = DistortionPlugins.DialogUi.SelectedModeColor;
+          control.ForeColor = highContrast ? SystemColors.HighlightText : Color.White;
+          if (control is ButtonBase selected)
+            selected.FlatAppearance.BorderColor = control.ForeColor;
+        }
         Apply(control);
       }
     }
@@ -314,10 +322,10 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     token.Rate = rateSlider.Value;
     token.Quality = qualitySlider.Value;
     token.MeshSize = meshSizeSlider.Value;
-    token.ShowMesh = showMeshCheck.Checked;
-    token.ShowMask = showMaskCheck.Checked;
-    token.ShowBackdrop = showBackdropCheck.Checked;
-    token.UsePenPressure = penPressureCheck.Checked;
+    token.ShowMesh = showMeshButton.IsSelected;
+    token.ShowMask = showMaskButton.IsSelected;
+    token.ShowBackdrop = showBackdropButton.IsSelected;
+    token.UsePenPressure = penPressureButton.IsSelected;
     token.SidebarCollapsed = sidebarCollapsed;
   }
 
@@ -446,45 +454,57 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     {
       var group = new FlowLayoutPanel
       {
-        Width = S(185), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        Width = S(125), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
         FlowDirection = FlowDirection.TopDown, WrapContents = false,
-        Margin = new Padding(0, 0, S(8), 0)
+        Margin = new Padding(0, 0, S(4), 0)
       };
       topBar.Controls.Add(group);
       return group;
     }
-    (brushSizeSlider, brushSizeValue) = AddSlider(BrushGroup(), "Size:", S(180), 5, 1200, 80, v => $"{v} px");
-    (strengthSlider, strengthValue) = AddSlider(BrushGroup(), "Pressure:", S(180), 5, 100, 25, v => $"{v}%");
+    (brushSizeSlider, brushSizeValue) = AddSlider(BrushGroup(), "Size:", S(120), 5, 1200, 80, v => $"{v} px");
+    (strengthSlider, strengthValue) = AddSlider(BrushGroup(), "Pressure:", S(120), 5, 100, 25, v => $"{v}%");
     strengthSlider.TickFrequency = 5;
     strengthSlider.SmallChange = 5;
     strengthSlider.LargeChange = 10;
-    (densitySlider, densityValue) = AddSlider(BrushGroup(), "Density:", S(180), 0, 100, 25, v => $"{v}%");
-    (rateSlider, rateValue) = AddSlider(BrushGroup(), "Rate:", S(180), 1, 120, 20, v => $"{v}/s");
-    (reconstructSlider, reconstructValue) = AddSlider(leftPanel, "Reconstruct Amount:", ctrlW, 0, 100, 0, v => $"{v}%");
-    leftPanel.Controls.Add(MakeHintLabel("Blend the complete deformation field back toward the original image.", ctrlW));
-    (qualitySlider, qualityValue) = AddSlider(leftPanel, "Quality:", ctrlW, 1, 4, 2, v => $"{v}x");
-    leftPanel.Controls.Add(MakeHintLabel("RGSS multisampling level. Higher = smoother but slower.", ctrlW));
-    (meshSizeSlider, meshSizeValue) = AddSlider(leftPanel, "Mesh Size:", ctrlW, 8, 256, 32, v => $"{v} px");
+    (densitySlider, densityValue) = AddSlider(BrushGroup(), "Density:", S(120), 0, 100, 25, v => $"{v}%");
+    (rateSlider, rateValue) = AddSlider(BrushGroup(), "Rate:", S(120), 1, 120, 20, v => $"{v}/s");
+    var reconstructionGroup = BrushGroup();
+    reconstructionGroup.Width = S(155);
+    (reconstructSlider, reconstructValue) = AddSlider(reconstructionGroup, "Reconstruct:", S(150), 0, 100, 0, v => $"{v}%");
+    reconstructSlider.AccessibleName = "Reconstruct Amount";
+    DistortionPlugins.DialogUi.AddControlInfo(this, reconstructSlider, uiToolTip,
+      "Blend the whole deformation back toward the original. Default 0% preserves your edits; 100% shows the original. This is separate from local Reconstruct brush strength.");
+    (qualitySlider, qualityValue) = AddSlider(BrushGroup(), "Quality:", S(120), 1, 4, 2, v => $"{v}x");
+    (meshSizeSlider, meshSizeValue) = AddSlider(BrushGroup(), "Mesh:", S(120), 8, 256, 32, v => $"{v} px");
+    meshSizeSlider.AccessibleName = "Mesh Size";
+    DistortionPlugins.DialogUi.AddControlInfo(this, qualitySlider, uiToolTip,
+      "RGSS multisampling for the final render: higher quality is smoother but slower. This does not change CPU preview sampling.");
 
-    showMeshCheck = MakeCheckBox("Show Mesh");
-    showMaskCheck = MakeCheckBox("Show Mask", true);
-    showBackdropCheck = MakeCheckBox("Show Backdrop");
-    penPressureCheck = MakeCheckBox("Use Pen Pressure", true);
-    leftPanel.Controls.Add(showMeshCheck);
-    leftPanel.Controls.Add(showMaskCheck);
-    leftPanel.Controls.Add(showBackdropCheck);
-    leftPanel.Controls.Add(penPressureCheck);
-    leftPanel.Controls.Add(MakeHintLabel("Pen pressure requires a Windows pen driver that reports pressure. Mouse/unsupported drivers use full intensity.", ctrlW));
-    DistortionPlugins.DialogUi.AddControlInfo(this, showMeshCheck, uiToolTip,
-      "Show a visual mesh that follows the image deformation. Mesh Size controls its spacing. Folded or unsolved segments are omitted and reported in status. This overlay is not included in the final image.");
-    DistortionPlugins.DialogUi.AddControlInfo(this, showMaskCheck, uiToolTip,
-      "Show the freeze-mask overlay so you can see protected pixels. Hiding it does not remove protection: Freeze, Unfreeze, and mask actions still affect the same pixels. The overlay is not included in the final image.");
-    DistortionPlugins.DialogUi.AddControlInfo(this, showBackdropCheck, uiToolTip,
-      "Preview the edited layer against the document composition to see it in context with other layers. This changes only the preview; it does not merge layers or change the final effect output.");
-
-    var maskRow = new FlowLayoutPanel
+    var viewActions = new FlowLayoutPanel
     {
-      FlowDirection = FlowDirection.LeftToRight,
+      Name = "viewActions", AutoSize = true, FlowDirection = FlowDirection.TopDown,
+      WrapContents = false, Margin = new Padding(0, 0, S(8), 0)
+    };
+    var viewRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+    showMeshButton = DistortionPlugins.DialogUi.Toggle(this, uiToolTip, DistortionPlugins.UiGlyph.Grid, "Show mesh", "");
+    showMeshButton.Name = "showMeshToggle";
+    showMaskButton = DistortionPlugins.DialogUi.Toggle(this, uiToolTip, DistortionPlugins.UiGlyph.Mask, "Hide mask", "");
+    showMaskButton.Name = "showMaskToggle";
+    showMaskButton.IsSelected = true;
+    showBackdropButton = DistortionPlugins.DialogUi.Toggle(this, uiToolTip, DistortionPlugins.UiGlyph.Backdrop, "Show backdrop", "");
+    showBackdropButton.Name = "showBackdropToggle";
+    penPressureButton = DistortionPlugins.DialogUi.Toggle(this, uiToolTip, DistortionPlugins.UiGlyph.PenPressure, "Disable pen pressure", "");
+    penPressureButton.Name = "penPressureToggle";
+    penPressureButton.IsSelected = true;
+    viewRow.Controls.AddRange(new Control[] { showMeshButton, showMaskButton, showBackdropButton, penPressureButton });
+    viewActions.Controls.Add(viewRow);
+    topBar.Controls.Add(viewActions);
+    UpdateToolbarToggles();
+
+    editingActions = new FlowLayoutPanel
+    {
+      Name = "editingActions",
+      FlowDirection = FlowDirection.TopDown,
       AutoSize = true,
       WrapContents = false,
       BackColor = Color.Transparent,
@@ -496,23 +516,11 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     maskNoneBtn.Click += (_, _) => SetMask(LiquifiedMaskOperation.None);
     maskAllBtn.Click += (_, _) => SetMask(LiquifiedMaskOperation.All);
     maskInvertBtn.Click += (_, _) => SetMask(LiquifiedMaskOperation.Invert);
-    maskRow.Controls.AddRange(new Control[] { maskNoneBtn, maskAllBtn, maskInvertBtn });
-    leftPanel.Controls.Add(maskRow);
+    editingActions.Controls.AddRange(new Control[] { maskNoneBtn, maskAllBtn, maskInvertBtn });
+    leftPanel.Controls.Add(editingActions);
 
-    var reconstructionRow = new FlowLayoutPanel
-    {
-      FlowDirection = FlowDirection.LeftToRight,
-      AutoSize = true,
-      WrapContents = false,
-      BackColor = Color.Transparent,
-      Margin = new Padding(0, S(2), 0, S(2))
-    };
-    var reconstructAllBtn = MakeActionButton(ActionGlyph.Reconstruct, "Reconstruct All", "Set reconstruction to 100% to preview the original; lower the amount to recover the deformation.");
-    var restoreAllBtn = MakeActionButton(ActionGlyph.Restore, "Restore All", "Remove deformation while preserving the freeze mask. This edit can be undone.");
-    reconstructAllBtn.Click += (_, _) => { reconstructSlider.Value = reconstructSlider.Maximum; PushUpdate(); RequestPreview(); };
-    restoreAllBtn.Click += (_, _) => ResetStrokes();
-    reconstructionRow.Controls.AddRange(new Control[] { reconstructAllBtn, restoreAllBtn });
-    leftPanel.Controls.Add(reconstructionRow);
+    resetBtn = MakeActionButton(ActionGlyph.Restore, "Remove Deformation", "Remove deformation while preserving the freeze mask. This edit can be undone.");
+    editingActions.Controls.Add(resetBtn);
 
     statusLabel = MakeAutoLabel("Ready");
     statusLabel.MaximumSize = new Size(ctrlW, 0);
@@ -530,14 +538,14 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       Margin = new Padding(0, S(8), 0, S(8))
     };
     leftPanel.Controls.Add(helpLabel);
-    var saveDefaults = MakeButton("Save Defaults");
-    saveDefaults.AccessibleDescription = "Save the current brush and display settings for new Liquified sessions, without strokes or masks.";
+    var saveDefaults = DistortionPlugins.DialogUi.Icon(this, uiToolTip, DistortionPlugins.UiGlyph.Save,
+      "Save Defaults", "Save brush and display settings for new Liquified sessions, without strokes, masks, or reconstruction.");
+    saveDefaults.Name = "saveDefaults";
     saveDefaults.Click += (_, _) => SaveDefaults();
-    leftPanel.Controls.Add(saveDefaults);
+    editingActions.Controls.Add(saveDefaults);
 
     undoBtn = MakeActionButton(ActionGlyph.Undo, "Undo", "Undo last edit (Ctrl+Z; up to 256 retained steps).");
     redoBtn = MakeActionButton(ActionGlyph.Redo, "Redo", "Redo last undone edit (Ctrl+Y).");
-    resetBtn = MakeActionButton(ActionGlyph.Restore, "Restore", "Remove deformation while preserving the freeze mask. This edit can be undone.");
     var okBtn = MakeButton("OK");
     okBtn.DialogResult = DialogResult.OK;
     okBtn.MinimumSize = new Size(S(90), okBtn.MinimumSize.Height);
@@ -558,7 +566,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = true,
       Margin = Padding.Empty
     };
-    buttonRow.Controls.AddRange(new Control[] { undoBtn, redoBtn, resetBtn, okBtn, cancelBtn });
+    buttonRow.Controls.AddRange(new Control[] { undoBtn, redoBtn, okBtn, cancelBtn });
     statusLabel.Margin = new Padding(0, S(5), 0, 0);
     statusLabel.Dock = DockStyle.Fill;
     bottomBar.Controls.Add(buttonRow, 0, 0);
@@ -590,6 +598,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   private void SetSidebarCollapsed(bool collapsed)
   {
     sidebarCollapsed = collapsed;
+    (collapsed ? modeButtonsPanel : leftPanel).Controls.Add(editingActions);
     leftPanel.Visible = !collapsed;
     ((DistortionPlugins.GlyphButton)sidebarButton).Glyph = collapsed ? DistortionPlugins.UiGlyph.Expand : DistortionPlugins.UiGlyph.Collapse;
     sidebarButton.AccessibleName = collapsed ? "Show advanced settings" : "Hide advanced settings";
@@ -688,12 +697,28 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       canvas?.Invalidate();
       if (!suppressUiEvents) PushUpdate();
     };
-    showMeshCheck.CheckedChanged += (_, _) => { canvas?.Invalidate(); if (!suppressUiEvents) PushUpdate(); };
-    showMaskCheck.CheckedChanged += (_, _) => { canvas?.Invalidate(); if (!suppressUiEvents) PushUpdate(); };
-    penPressureCheck.CheckedChanged += (_, _) => { if (!suppressUiEvents) PushUpdate(); };
-    showBackdropCheck.CheckedChanged += (_, _) =>
+    showMeshButton.CheckedChanged += (_, _) =>
     {
-      if (showBackdropCheck.Checked)
+      if (suppressUiEvents) return;
+      UpdateToolbarToggles();
+      PushUpdate();
+    };
+    showMaskButton.CheckedChanged += (_, _) =>
+    {
+      if (suppressUiEvents) return;
+      UpdateToolbarToggles();
+      PushUpdate();
+    };
+    penPressureButton.CheckedChanged += (_, _) =>
+    {
+      if (suppressUiEvents) return;
+      UpdateToolbarToggles();
+      PushUpdate();
+    };
+    showBackdropButton.CheckedChanged += (_, _) =>
+    {
+      if (suppressUiEvents) return;
+      if (showBackdropButton.IsSelected)
       {
         try
         {
@@ -704,8 +729,8 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
           statusLabel.Text = $"Backdrop preview error: {ex.Message}";
         }
       }
-      canvas?.Invalidate();
-      if (!suppressUiEvents) PushUpdate();
+      UpdateToolbarToggles();
+      PushUpdate();
     };
 
     undoBtn.Click += (_, _) => Undo();
@@ -785,7 +810,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     g.PixelOffsetMode = PixelOffsetMode.Half;
 
     var imgRect = GetImageRect();
-    Surface displayedSurface = showBackdropCheck?.Checked == true && backdropSurface != null
+    Surface displayedSurface = showBackdropButton?.IsSelected == true && backdropSurface != null
       ? backdropSurface
       : workSurface;
     using (var bmp = displayedSurface.CreateAliasedBitmap())
@@ -799,10 +824,10 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       g.DrawRectangle(pen, imgRect.X, imgRect.Y, imgRect.Width, imgRect.Height);
     }
 
-    if (showMaskCheck?.Checked == true && frozenPixelCount > 0)
+    if (showMaskButton?.IsSelected == true && frozenPixelCount > 0)
       DrawFrozenOverlay(g, imgRect);
 
-    if (showMeshCheck?.Checked == true)
+    if (showMeshButton?.IsSelected == true)
       DrawMesh(g, imgRect);
 
     // Brush cursor
@@ -897,8 +922,9 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       $"Brush: {brushSizeSlider.Value}px | Rate: {rateSlider.Value}/s | " +
       $"Zoom: {zoom:P0} | Frozen: {frozenPixelCount:N0} | " +
       $"Position: {(int)image.X}, {(int)image.Y} | " +
-      (pointerCaptureActive && penPressureCheck.Checked && penPressureAvailable ? $"Pen: {lastPointerPressure:P0}" : "Pressure: full (mouse/unsupported driver)") +
-      (showMeshCheck.Checked ? (meshHasUnresolvedNodes ? " | Mesh: ambiguous/folded or unsolved segments omitted" : " | Mesh: forward deformation") : string.Empty) +
+      (!penPressureButton.IsSelected ? "Pen pressure: off" :
+        pointerCaptureActive && penPressureAvailable ? $"Pen: {lastPointerPressure:P0}" : "Pressure: full (mouse/unsupported driver)") +
+      (showMeshButton.IsSelected ? (meshHasUnresolvedNodes ? " | Mesh: ambiguous/folded or unsolved segments omitted" : " | Mesh: forward deformation") : string.Empty) +
       $" | Undo: {undoStack.Count}/{MaximumUndoSteps}";
   }
 
@@ -995,7 +1021,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         float dy = ip.Y - lastBrushPt.Y;
         if (dx * dx + dy * dy >= 4f)
         {
-          currentStroke.Points.Add(new[] { ip.X, ip.Y, penPressureCheck.Checked ? lastPointerPressure : 1f, dx, dy });
+          currentStroke.Points.Add(new[] { ip.X, ip.Y, penPressureButton.IsSelected ? lastPointerPressure : 1f, dx, dy });
           if (currentStroke.Mode is LiquifiedMode.Freeze or LiquifiedMode.Unfreeze)
             PaintFreezeMaskAtPoint(ip, currentStroke.BrushSize, currentStroke.Mode == LiquifiedMode.Freeze);
           RequestPreview();
@@ -1307,7 +1333,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         displayedMap = result.Map;
         previewError = null;
       }
-      if (showBackdropCheck.Checked)
+      if (showBackdropButton.IsSelected)
         RefreshCompositedBackdrop();
     }
     catch (OperationCanceledException)
@@ -1362,7 +1388,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       return;
     if (currentStroke.Mode == LiquifiedMode.ForwardWarp)
       return;
-    currentStroke.Points.Add(new[] { lastBrushPt.X, lastBrushPt.Y, penPressureCheck.Checked ? lastPointerPressure : 1f, 0f, 0f });
+    currentStroke.Points.Add(new[] { lastBrushPt.X, lastBrushPt.Y, penPressureButton.IsSelected ? lastPointerPressure : 1f, 0f, 0f });
     if (currentStroke.Mode is LiquifiedMode.Freeze or LiquifiedMode.Unfreeze)
       PaintFreezeMaskAtPoint(lastBrushPt, currentStroke.BrushSize, currentStroke.Mode == LiquifiedMode.Freeze);
     RequestPreview();
@@ -1428,13 +1454,14 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   private void HandlePenPointer(Point location, float pressure, int phase, bool hasPressure)
   {
     penPressureAvailable = hasPressure;
+    pressure = hasPressure ? Math.Clamp(pressure, 0f, 1f) : 1f;
     if (phase == 0)
     {
       lastPointerPressure = pressure;
       Canvas_MouseDown(null, new MouseEventArgs(MouseButtons.Left, 1, location.X, location.Y, 0));
       pointerCaptureActive = true;
       if (currentStroke is { Points.Count: > 0 })
-        currentStroke.Points[^1][2] = penPressureCheck.Checked ? pressure : 1f;
+        currentStroke.Points[^1][2] = penPressureButton.IsSelected ? pressure : 1f;
       return;
     }
 
@@ -1447,7 +1474,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
         Canvas_MouseMove(null, new MouseEventArgs(MouseButtons.Left, 0, location.X, location.Y, 0));
         if (currentStroke.Points.Count > oldCount)
         {
-          float scale = penPressureCheck.Checked ? pressure : 1f;
+          float scale = penPressureButton.IsSelected ? pressure : 1f;
           currentStroke.Points[^1][2] = scale;
         }
       }
@@ -1671,10 +1698,11 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       reconstructSlider.Value = Math.Clamp((int)(token.ReconstructAmount * 100), reconstructSlider.Minimum, reconstructSlider.Maximum);
       qualitySlider.Value = Math.Clamp(token.Quality, qualitySlider.Minimum, qualitySlider.Maximum);
       meshSizeSlider.Value = Math.Clamp(token.MeshSize, meshSizeSlider.Minimum, meshSizeSlider.Maximum);
-      showMeshCheck.Checked = token.ShowMesh;
-      showMaskCheck.Checked = token.ShowMask;
-      showBackdropCheck.Checked = token.ShowBackdrop;
-      penPressureCheck.Checked = token.UsePenPressure;
+      showMeshButton.IsSelected = token.ShowMesh;
+      showMaskButton.IsSelected = token.ShowMask;
+      showBackdropButton.IsSelected = token.ShowBackdrop;
+      penPressureButton.IsSelected = token.UsePenPressure;
+      UpdateToolbarToggles();
       SetSidebarCollapsed(token.SidebarCollapsed);
       brushSizeValue.Text = $"{brushSizeSlider.Value} px";
       strengthValue.Text = $"{strengthSlider.Value}%";
@@ -1695,6 +1723,26 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
   {
     if (undoBtn != null) undoBtn.Enabled = undoStack.Count > 0;
     if (redoBtn != null) redoBtn.Enabled = redoStack.Count > 0;
+  }
+
+  private void UpdateToolbarToggles()
+  {
+    meshSizeSlider.Parent!.Visible = showMeshButton.IsSelected;
+    void Describe(DistortionPlugins.GlyphToggle button, string show, string hide, string description)
+    {
+      button.AccessibleName = button.IsSelected ? hide : show;
+      button.AccessibleDescription = button.AccessibleName + (button.IsSelected ? ". Currently on. " : ". Currently off. ") + description;
+      uiToolTip.SetToolTip(button, button.AccessibleDescription);
+    }
+    Describe(showMeshButton, "Show mesh", "Hide mesh",
+      "Preview the deformation mesh; Mesh Size controls spacing. Folded or unsolved segments are omitted and reported in status. This overlay is not included in the final image.");
+    Describe(showMaskButton, "Show mask", "Hide mask",
+      "Freeze-mask preview only; hiding it does not remove protection or change the final image.");
+    Describe(showBackdropButton, "Show backdrop", "Hide backdrop",
+      "Preview against the document composition; this does not merge layers or change the final image.");
+    Describe(penPressureButton, "Enable pen pressure", "Disable pen pressure",
+      "Use pressure reported by the Windows pen driver to scale brush strength. This uses Windows pointer input, not Paint.NET's internal pen API. Mouse or unsupported drivers use full intensity.");
+    if (canvas is not null) ApplyTheme();
   }
 
   // ═════════════════════════════════════════════════════════
@@ -1756,22 +1804,6 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     return button;
   }
 
-  private CheckBox MakeCheckBox(string text, bool isChecked = false)
-  {
-    bool highContrast = SystemInformation.HighContrast;
-    return new CheckBox
-    {
-      Text = text,
-      Checked = isChecked,
-      AutoSize = true,
-      ForeColor = highContrast ? SystemColors.ControlText : LabelColor,
-      BackColor = highContrast ? SystemColors.Control : Color.Transparent,
-      Margin = new Padding(0, S(2), 0, S(2)),
-      AccessibleName = text,
-      AccessibleRole = AccessibleRole.CheckButton
-    };
-  }
-
   private Button MakeActionButton(ActionGlyph glyph, string name, string tooltip)
   {
     Button btn = MakeButton(string.Empty);
@@ -1797,18 +1829,35 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     using var fill = new SolidBrush(color);
     if (glyph is ActionGlyph.MaskNone or ActionGlyph.MaskAll or ActionGlyph.MaskInvert)
     {
-      graphics.DrawRectangle(pen, 3, 3, 18, 18);
       if (glyph == ActionGlyph.MaskAll)
-        graphics.FillRectangle(fill, 6, 6, 12, 12);
+      {
+        graphics.FillRectangle(fill, 1, 1, 22, 22);
+        using var contrastPen = new Pen(Color.Black, 1.8f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var halo = new Pen(Color.White, 3.8f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        DistortionPlugins.DialogUi.DrawFreezeGlyph(graphics, halo, false);
+        DistortionPlugins.DialogUi.DrawFreezeGlyph(graphics, contrastPen, false);
+      }
       else if (glyph == ActionGlyph.MaskInvert)
       {
-        graphics.FillRectangle(fill, 4, 4, 8, 16);
-        graphics.DrawLine(pen, 12, 4, 12, 20);
+        var state = graphics.Save();
+        graphics.TranslateTransform(4, 3);
+        graphics.ScaleTransform(0.65f, 0.65f);
+        DistortionPlugins.DialogUi.DrawFreezeGlyph(graphics, pen, false);
+        graphics.Restore(state);
+        graphics.DrawLine(pen, 2, 3, 19, 3);
+        graphics.DrawLines(pen, new[] { new PointF(16, 1), new PointF(19, 3), new PointF(16, 5) });
+        graphics.DrawLine(pen, 22, 21, 5, 21);
+        graphics.DrawLines(pen, new[] { new PointF(8, 19), new PointF(5, 21), new PointF(8, 23) });
       }
       else
       {
-        graphics.DrawLine(pen, 7, 7, 17, 17);
-        graphics.DrawLine(pen, 7, 17, 17, 7);
+        DistortionPlugins.DialogUi.DrawFreezeGlyph(graphics, pen, false);
+        using var halo = new Pen(Color.White, 4.8f);
+        using var cross = new Pen(Color.Black, 2.2f);
+        graphics.DrawLine(halo, 14, 14, 22, 22);
+        graphics.DrawLine(halo, 14, 22, 22, 14);
+        graphics.DrawLine(cross, 14, 14, 22, 22);
+        graphics.DrawLine(cross, 14, 22, 22, 14);
       }
     }
     else
@@ -1823,11 +1872,6 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       graphics.DrawLines(pen, new[] { new PointF(3, 6), new PointF(5, 12), new PointF(10, 8) });
       if (glyph == ActionGlyph.Restore)
         graphics.DrawRectangle(pen, 10, 10, 6, 6);
-      else if (glyph == ActionGlyph.Reconstruct)
-      {
-        graphics.DrawLine(pen, 9, 12, 15, 12);
-        graphics.DrawLine(pen, 12, 9, 12, 15);
-      }
     }
     return bitmap;
   }
@@ -1928,26 +1972,12 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
           break;
         }
       case LiquifiedMode.Pucker:
-        {
-          // 4 arrows pointing inward.
-          DrawDirArrow(g, pen, brush, cx, cy, 1, 0, r, size, inward: true);
-          DrawDirArrow(g, pen, brush, cx, cy, -1, 0, r, size, inward: true);
-          DrawDirArrow(g, pen, brush, cx, cy, 0, 1, r, size, inward: true);
-          DrawDirArrow(g, pen, brush, cx, cy, 0, -1, r, size, inward: true);
-          // Center dot.
-          float d = strokeW * 0.65f;
-          g.FillEllipse(brush, cx - d, cy - d, d * 2, d * 2);
-          break;
-        }
       case LiquifiedMode.Bloat:
         {
-          // 4 arrows pointing outward.
-          DrawDirArrow(g, pen, brush, cx, cy, 1, 0, r, size, inward: false);
-          DrawDirArrow(g, pen, brush, cx, cy, -1, 0, r, size, inward: false);
-          DrawDirArrow(g, pen, brush, cx, cy, 0, 1, r, size, inward: false);
-          DrawDirArrow(g, pen, brush, cx, cy, 0, -1, r, size, inward: false);
-          float d = r * 0.28f;
-          g.DrawEllipse(pen, cx - d, cy - d, d * 2, d * 2);
+          bool inward = mode == LiquifiedMode.Pucker;
+          foreach (int x in new[] { -1, 1 })
+            foreach (int y in new[] { -1, 1 })
+              DrawDirArrow(g, pen, cx, cy, x * 0.7071f, y * 0.7071f, r, size, inward);
           break;
         }
       case LiquifiedMode.TwistCW:
@@ -2014,7 +2044,7 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     g.FillPolygon(brush, new[] { p1, p2, p3 });
   }
 
-  private static void DrawDirArrow(Graphics g, Pen pen, Brush brush, float cx, float cy, float dx, float dy, float r, int size, bool inward)
+  private static void DrawDirArrow(Graphics g, Pen pen, float cx, float cy, float dx, float dy, float r, int size, bool inward)
   {
     float ah = size * 0.16f;
     float gap = size * 0.18f;
@@ -2025,7 +2055,14 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
     float ex = cx + dx * endMag;
     float ey = cy + dy * endMag;
     g.DrawLine(pen, sx, sy, ex, ey);
-    DrawArrowHead(g, brush, ex, ey, ex - sx, ey - sy, ah);
+    float direction = inward ? -1f : 1f;
+    float vx = dx * direction, vy = dy * direction;
+    g.DrawLines(pen, new[]
+    {
+      new PointF(ex - vx * ah - vy * ah, ey - vy * ah + vx * ah),
+      new PointF(ex, ey),
+      new PointF(ex - vx * ah + vy * ah, ey - vy * ah - vx * ah)
+    });
   }
 
   private static void DrawCircularArrow(Graphics g, Pen pen, Brush brush, float cx, float cy, float r, bool clockwise, int size)
@@ -2089,7 +2126,8 @@ internal sealed class LiquifiedConfigForm : EffectConfigForm2
       FlowLayoutPanel parent, string label, int ctrlW, int min, int max, int val, Func<int, string> fmt)
   {
     int rowH = S(22);
-    int valW = S(80);
+    int valW = Math.Max(TextRenderer.MeasureText(fmt(min), Font).Width,
+      TextRenderer.MeasureText(fmt(max), Font).Width) + S(4);
     var row = new Panel
     {
       Width = ctrlW,

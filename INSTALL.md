@@ -245,6 +245,12 @@ use `-PluginDirectory 'C:\path\to\package'` to select another source.
 Check Paint.NET's plugin loading errors in its Settings dialog for assembly or runtime
 compatibility failures. A successful file copy does not prove that the host loaded a plugin.
 
+If Paint.NET 5.2 reports that shader `get_EffectFactory` is not implemented, an older
+unmerged development DLL may be binding to the host's newer ComputeSharp interface.
+Close Paint.NET and replace all three plugin DLLs with the complete verified Release
+package or freshly built self-contained outputs from `bin`, not `obj`. Do not replace
+Paint.NET's own ComputeSharp assemblies or add dependency DLLs to its installation.
+
 ### Setup reports "The system cannot find the file specified" when replacing the uninstaller
 
 Windows Defender Controlled Folder Access can produce this misleading error when

@@ -3,10 +3,12 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Windows.Forms;
+using System.Windows.Automation;
+using System.Windows.Automation.Provider;
 
 namespace DistortionPlugins;
 
-internal enum UiGlyph { Info, Collapse, Expand, Undo, Redo, Reset, Detect, Grid, Move, Freeze, Unfreeze, Link, Unlink }
+internal enum UiGlyph { Info, Collapse, Expand, Undo, Redo, Reset, Detect, Grid, Move, Freeze, Unfreeze, Link, Unlink, Mask, Backdrop, PenPressure, Save }
 
 internal sealed class GlyphButton : Button
 {
@@ -19,33 +21,38 @@ internal sealed class GlyphButton : Button
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
+        DrawGlyph(this, Glyph, e);
+    }
+
+    internal static void DrawGlyph(Control control, UiGlyph glyph, PaintEventArgs e)
+    {
         var graphics = e.Graphics;
         var state = graphics.Save();
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        float size = Math.Min(ClientSize.Width - 8, ClientSize.Height - 8);
-        graphics.TranslateTransform((ClientSize.Width - size) / 2, (ClientSize.Height - size) / 2);
+        float size = Math.Min(control.ClientSize.Width - 8, control.ClientSize.Height - 8);
+        graphics.TranslateTransform((control.ClientSize.Width - size) / 2, (control.ClientSize.Height - size) / 2);
         graphics.ScaleTransform(size / 24f, size / 24f);
-        using var pen = new Pen(Enabled ? ForeColor : SystemColors.GrayText, 1.8f)
+        using var pen = new Pen(control.Enabled ? control.ForeColor : SystemColors.GrayText, 1.8f)
         { LineJoin = LineJoin.Round, StartCap = LineCap.Round, EndCap = LineCap.Round };
-        if (Glyph == UiGlyph.Info)
+        if (glyph == UiGlyph.Info)
         {
             graphics.DrawEllipse(pen, 3, 3, 18, 18);
             graphics.DrawLine(pen, 12, 10, 12, 17);
             graphics.DrawLine(pen, 12, 7, 12, 7.2f);
         }
-        else if (Glyph is UiGlyph.Collapse or UiGlyph.Expand)
+        else if (glyph is UiGlyph.Collapse or UiGlyph.Expand)
         {
-            float direction = Glyph == UiGlyph.Collapse ? -1 : 1;
+            float direction = glyph == UiGlyph.Collapse ? -1 : 1;
             graphics.DrawLines(pen, new[] { new PointF(12 - direction * 3, 5), new PointF(12 + direction * 3, 12), new PointF(12 - direction * 3, 19) });
         }
-        else if (Glyph is UiGlyph.Undo or UiGlyph.Redo or UiGlyph.Reset)
+        else if (glyph is UiGlyph.Undo or UiGlyph.Redo or UiGlyph.Reset)
         {
-            if (Glyph == UiGlyph.Redo) { graphics.TranslateTransform(24, 0); graphics.ScaleTransform(-1, 1); }
+            if (glyph == UiGlyph.Redo) { graphics.TranslateTransform(24, 0); graphics.ScaleTransform(-1, 1); }
             graphics.DrawArc(pen, 5, 5, 14, 14, -150, 285);
             graphics.DrawLines(pen, new[] { new PointF(3, 6), new PointF(5, 12), new PointF(10, 8) });
-            if (Glyph == UiGlyph.Reset) graphics.DrawRectangle(pen, 10, 10, 6, 6);
+            if (glyph == UiGlyph.Reset) graphics.DrawRectangle(pen, 10, 10, 6, 6);
         }
-        else if (Glyph == UiGlyph.Move)
+        else if (glyph == UiGlyph.Move)
         {
             graphics.DrawLine(pen, 3, 12, 21, 12);
             graphics.DrawLine(pen, 12, 3, 12, 21);
@@ -54,19 +61,48 @@ internal sealed class GlyphButton : Button
             graphics.DrawLines(pen, new[] { new PointF(8, 7), new PointF(12, 3), new PointF(16, 7) });
             graphics.DrawLines(pen, new[] { new PointF(8, 17), new PointF(12, 21), new PointF(16, 17) });
         }
-        else if (Glyph is UiGlyph.Freeze or UiGlyph.Unfreeze)
+        else if (glyph is UiGlyph.Freeze or UiGlyph.Unfreeze)
         {
-            DialogUi.DrawFreezeGlyph(graphics, pen, Glyph == UiGlyph.Unfreeze);
+            DialogUi.DrawFreezeGlyph(graphics, pen, glyph == UiGlyph.Unfreeze);
         }
-        else if (Glyph is UiGlyph.Link or UiGlyph.Unlink)
+        else if (glyph == UiGlyph.Save)
+        {
+            graphics.DrawPolygon(pen, new[] { new PointF(4, 3), new PointF(17, 3), new PointF(21, 7), new PointF(21, 21), new PointF(4, 21) });
+            graphics.DrawRectangle(pen, 8, 3, 8, 6);
+            graphics.DrawRectangle(pen, 8, 14, 9, 7);
+        }
+        else if (glyph == UiGlyph.Mask)
+        {
+            graphics.DrawEllipse(pen, 4, 4, 16, 16);
+            using var fill = new SolidBrush(pen.Color);
+            graphics.FillPie(fill, 4, 4, 16, 16, 90, 180);
+        }
+        else if (glyph == UiGlyph.Backdrop)
+        {
+            graphics.DrawRectangle(pen, 3, 3, 12, 12);
+            using var fill = new SolidBrush(control.BackColor);
+            graphics.FillRectangle(fill, 9, 9, 12, 12);
+            graphics.DrawRectangle(pen, 9, 9, 12, 12);
+            graphics.DrawLine(pen, 9, 15, 21, 15);
+            graphics.DrawLine(pen, 15, 9, 15, 21);
+        }
+        else if (glyph == UiGlyph.PenPressure)
+        {
+            graphics.DrawPolygon(pen, new[] { new PointF(5, 17), new PointF(8, 10), new PointF(15, 3), new PointF(20, 8), new PointF(13, 15) });
+            graphics.DrawLine(pen, 8, 10, 13, 15);
+            graphics.DrawLine(pen, 5, 21, 19, 21);
+            graphics.DrawLine(pen, 16, 17, 18, 15);
+            graphics.DrawLine(pen, 20, 18, 22, 18);
+        }
+        else if (glyph is UiGlyph.Link or UiGlyph.Unlink)
         {
             graphics.TranslateTransform(12, 12);
             graphics.RotateTransform(-35);
             graphics.DrawEllipse(pen, -10, -3.5f, 12, 7);
             graphics.DrawEllipse(pen, -2, -3.5f, 12, 7);
-            if (Glyph == UiGlyph.Unlink)
+            if (glyph == UiGlyph.Unlink)
             {
-                using var erase = new Pen(BackColor, 4);
+                using var erase = new Pen(control.BackColor, 4);
                 graphics.DrawLine(erase, 0, -5, 0, 5);
                 graphics.DrawLine(pen, -3, -6, -5, -9);
                 graphics.DrawLine(pen, 3, 6, 5, 9);
@@ -75,7 +111,7 @@ internal sealed class GlyphButton : Button
         else
         {
             graphics.DrawRectangle(pen, 4, 4, 16, 16);
-            if (Glyph == UiGlyph.Grid)
+            if (glyph == UiGlyph.Grid)
             {
                 graphics.DrawLine(pen, 12, 4, 12, 20);
                 graphics.DrawLine(pen, 4, 12, 20, 12);
@@ -87,6 +123,87 @@ internal sealed class GlyphButton : Button
             }
         }
         graphics.Restore(state);
+    }
+}
+
+internal sealed class GlyphToggle : CheckBox
+{
+    private ToggleProvider? _automationProvider;
+    private ToggleProvider AutomationProvider => _automationProvider ??= new(this);
+
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal UiGlyph Glyph { get; set; }
+
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal bool IsSelected { get => Checked; set => Checked = value; }
+
+    protected override void WndProc(ref Message m)
+    {
+        // Keep native MSAA support, but use our provider for exact UIA toggle-state events.
+        if (m.Msg == 0x003D && m.LParam == (IntPtr)AutomationInteropProvider.RootObjectId)
+        {
+            m.Result = AutomationInteropProvider.ReturnRawElementProvider(
+                Handle, m.WParam, m.LParam, AutomationProvider);
+            return;
+        }
+        base.WndProc(ref m);
+    }
+
+    protected override void OnCheckedChanged(EventArgs e)
+    {
+        bool current = Checked;
+        base.OnCheckedChanged(e);
+        if (IsHandleCreated && AutomationInteropProvider.ClientsAreListening)
+            AutomationInteropProvider.RaiseAutomationPropertyChangedEvent(
+                AutomationProvider,
+                new AutomationPropertyChangedEventArgs(TogglePatternIdentifiers.ToggleStateProperty,
+                    current ? ToggleState.Off : ToggleState.On,
+                    current ? ToggleState.On : ToggleState.Off));
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        GlyphButton.DrawGlyph(this, Glyph, e);
+    }
+
+    private sealed class ToggleProvider(GlyphToggle owner) : IRawElementProviderSimple, IToggleProvider
+    {
+        ProviderOptions IRawElementProviderSimple.ProviderOptions => ProviderOptions.ServerSideProvider;
+        IRawElementProviderSimple IRawElementProviderSimple.HostRawElementProvider =>
+            AutomationInteropProvider.HostProviderFromHandle(owner.Handle);
+
+        object? IRawElementProviderSimple.GetPatternProvider(int patternId) =>
+            patternId == TogglePatternIdentifiers.Pattern.Id ? this : null;
+
+        object? IRawElementProviderSimple.GetPropertyValue(int propertyId)
+        {
+            if (propertyId == AutomationElementIdentifiers.ControlTypeProperty.Id) return ControlType.CheckBox.Id;
+            if (propertyId == AutomationElementIdentifiers.NameProperty.Id) return owner.AccessibleName;
+            if (propertyId == AutomationElementIdentifiers.HasKeyboardFocusProperty.Id) return owner.Focused;
+            if (propertyId == AutomationElementIdentifiers.IsKeyboardFocusableProperty.Id) return owner.TabStop;
+            if (propertyId == AutomationElementIdentifiers.IsEnabledProperty.Id) return owner.Enabled;
+            if (propertyId == AutomationElementIdentifiers.AutomationIdProperty.Id) return owner.Name;
+            if (propertyId == AutomationElementIdentifiers.HelpTextProperty.Id) return owner.AccessibleDescription;
+            return null;
+        }
+
+        ToggleState IToggleProvider.ToggleState => owner.Checked ? ToggleState.On : ToggleState.Off;
+
+        void IToggleProvider.Toggle()
+        {
+            if (owner.IsDisposed) throw new ElementNotAvailableException();
+            if (!owner.Enabled) throw new ElementNotEnabledException();
+            void ToggleOnUiThread()
+            {
+                if (!owner.Enabled) throw new ElementNotEnabledException();
+                owner.Checked = !owner.Checked;
+            }
+            if (owner.InvokeRequired)
+                owner.Invoke((Action)ToggleOnUiThread);
+            else
+                ToggleOnUiThread();
+        }
     }
 }
 
@@ -114,6 +231,21 @@ internal static class DialogUi
         };
         tooltip.SetToolTip(button, description);
         return button;
+    }
+
+    internal static GlyphToggle Toggle(Form owner, ToolTip tooltip, UiGlyph glyph, string name, string description)
+    {
+        float dpi = owner.DeviceDpi / 96f;
+        var toggle = new GlyphToggle
+        {
+            Glyph = glyph, Text = string.Empty, FlatStyle = FlatStyle.Flat,
+            Appearance = Appearance.Button,
+            Size = new Size((int)(34 * dpi), (int)(34 * dpi)),
+            Margin = new Padding(0, 0, (int)(4 * dpi), (int)(4 * dpi)),
+            AccessibleName = name, AccessibleDescription = description
+        };
+        tooltip.SetToolTip(toggle, description);
+        return toggle;
     }
 
     internal static void CompactHelp(Form owner, FlowLayoutPanel panel, ToolTip tooltip)
@@ -213,18 +345,19 @@ internal static class DialogUi
             control.ForeColor = foreground;
             control.BackColor = control == canvas
                 ? contrast ? SystemColors.Window : dark ? Color.FromArgb(48, 48, 48) : Color.FromArgb(215, 215, 215)
-                : control is Button or ComboBox or NumericUpDown
+                : control is Button or GlyphToggle or ComboBox or NumericUpDown
                     ? contrast ? SystemColors.Control : dark ? Color.FromArgb(60, 60, 65) : Color.White
                     : background;
-            if (control is Button button)
+            if (control is ButtonBase button && (control is Button or GlyphToggle))
                 button.FlatAppearance.BorderColor = contrast ? SystemColors.ControlText
                     : dark ? Color.FromArgb(105, 105, 115) : Color.FromArgb(155, 155, 165);
             if (control is GlyphButton { IsSelected: true } ||
+                control is GlyphToggle { IsSelected: true } ||
                 control is Label { Name: "pointModeStatus", Tag: true })
             {
                 control.BackColor = SelectedModeColor;
                 control.ForeColor = contrast ? SystemColors.HighlightText : Color.White;
-                if (control is Button selected)
+                if (control is ButtonBase selected)
                     selected.FlatAppearance.BorderColor = contrast ? SystemColors.HighlightText : Color.White;
             }
             ApplyTheme(control, canvas, dark);
